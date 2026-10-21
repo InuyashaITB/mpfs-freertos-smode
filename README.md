@@ -8,6 +8,9 @@ build configurations) and meant to run in Renode from SoftConsole v2022.2.
 
 ## Boot flow
 
+Diagrams of the full sequence (reset, MMU/PMP configuration, S-mode handover,
+first tick) are in [`docs/boot-to-smode.md`](docs/boot-to-smode.md).
+
 ```
 reset, all harts ─► mss_entry.S (M-mode, HAL)
   E51  ─► main_first_hart: HW init, wakes harts 1..4 ─► e51():
