@@ -1,0 +1,10 @@
+# SoftConsole build output (one folder per build configuration)
+/LIM-Debug*/
+/LIM-Release*/
+/DDR-Release*/
+/eNVM-Scratchpad-Release*/
+/Debug/
+/Release/
+
+# Eclipse per-user settings
+/.settings*/
