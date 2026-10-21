@@ -21,17 +21,25 @@
  *                     address, reads it back, and has M-mode (no translation)
  *                     read the expected physical address to confirm the
  *                     Sv39 mapping.
+ *   heartbeat (prio 1): every 30 s prints uptime and heap/stack headroom.
  *
  * By the time s_mode_main() runs, smode_start.S has turned the Sv39 MMU on and
  * this code executes at its virtual (high) addresses.
+ *
+ * Console output: after the scheduler starts, every line goes through
+ * prvPrintf(), which formats and transmits under xConsoleMutex so lines from
+ * different tasks never interleave (MMUART1 is written with polled I/O).
+ * ISRs must not print; they post events to the console task instead.
  */
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
+#include "semphr.h"
 
 #include "mpfs_hal/mss_hal.h"
 #include "drivers/mss/mss_gpio/mss_gpio.h"
@@ -51,18 +59,50 @@ typedef enum
     EVT_F2M_0    = 3,
 } app_event_t;
 
+#define HEARTBEAT_PERIOD_MS     (30000U)
+
 static QueueHandle_t xEventQueue = NULL;
+static SemaphoreHandle_t xConsoleMutex = NULL;
 static volatile uint64_t ullSpinCount = 0U;
 static volatile uint32_t ulBlinkCount = 0U;
 static volatile uint32_t ulDdrPass = 0U;
 static volatile uint32_t ulDdrFail = 0U;
 
 /*------------------------------------------------------------------------------
- * Console helpers. Only the console task prints after the scheduler starts.
+ * Console output (task context only).
+ *
+ * Before the scheduler starts there is only one thread, so no locking. After
+ * that, formatting and transmission happen under xConsoleMutex. That also
+ * serialises newlib's formatter, which is not reentrant here
+ * (configUSE_NEWLIB_REENTRANT = 0).
  */
+static void prvPrintf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void prvPrintf(const char *fmt, ...)
+{
+    static char line[192];
+    const BaseType_t xLocked = (xConsoleMutex != NULL) &&
+        (taskSCHEDULER_RUNNING == xTaskGetSchedulerState());
+    va_list ap;
+
+    if (xLocked)
+    {
+        (void)xSemaphoreTake(xConsoleMutex, portMAX_DELAY);
+    }
+
+    va_start(ap, fmt);
+    (void)vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    MSS_UART_polled_tx_string(&g_mss_uart1_lo, (const uint8_t *)line);
+
+    if (xLocked)
+    {
+        (void)xSemaphoreGive(xConsoleMutex);
+    }
+}
+
 static void prvPrint(const char *s)
 {
-    MSS_UART_polled_tx_string(&g_mss_uart1_lo, (const uint8_t *)s);
+    prvPrintf("%s", s);
 }
 
 static uintptr_t prvReadSstatus(void)
@@ -124,7 +164,6 @@ uint8_t fabric_f2h_0_plic_IRQHandler(void)
 static void vConsoleTask(void *pvParameters)
 {
     (void)pvParameters;
-    char line[160];
     uint8_t rx[16];
     TickType_t xLastStatus = xTaskGetTickCount();
 
@@ -138,10 +177,9 @@ static void vConsoleTask(void *pvParameters)
         if (pdPASS == xQueueReceive(xEventQueue, &ucEvt, pdMS_TO_TICKS(20)))
         {
             static const char * const names[] = { "?", "GPIO2_30", "GPIO2_31", "F2M_0" };
-            snprintf(line, sizeof(line), "[S] PLIC S-context interrupt: %s (tick %lu)\r\n",
-                     names[(ucEvt <= 3U) ? ucEvt : 0U],
-                     (unsigned long)xTaskGetTickCount());
-            prvPrint(line);
+            prvPrintf("[S] PLIC S-context interrupt: %s (tick %lu)\r\n",
+                      names[(ucEvt <= 3U) ? ucEvt : 0U],
+                      (unsigned long)xTaskGetTickCount());
         }
 
         size_t n = MSS_UART_get_rx(&g_mss_uart1_lo, rx, sizeof(rx));
@@ -159,20 +197,18 @@ static void vConsoleTask(void *pvParameters)
         if ((xTaskGetTickCount() - xLastStatus) >= pdMS_TO_TICKS(1000))
         {
             xLastStatus += pdMS_TO_TICKS(1000);
-            snprintf(line, sizeof(line),
-                     "[S] tick=%lu sstatus=0x%lx spin=%lu blink=%lu "
-                     "mtimer->stip=%lu sbi=%lu ext=%lu ddr_ok=%lu ddr_bad=%lu heap_free=%lu\r\n",
-                     (unsigned long)xTaskGetTickCount(),
-                     (unsigned long)prvReadSstatus(),
-                     (unsigned long)ullSpinCount,
-                     (unsigned long)ulBlinkCount,
-                     (unsigned long)g_m_shim_timer_irqs,
-                     (unsigned long)g_m_shim_sbi_calls,
-                     (unsigned long)g_smode_ext_irqs,
-                     (unsigned long)ulDdrPass,
-                     (unsigned long)ulDdrFail,
-                     (unsigned long)xPortGetFreeHeapSize());
-            prvPrint(line);
+            prvPrintf("[S] tick=%lu sstatus=0x%lx spin=%lu blink=%lu "
+                      "mtimer->stip=%lu sbi=%lu ext=%lu ddr_ok=%lu ddr_bad=%lu heap_free=%lu\r\n",
+                      (unsigned long)xTaskGetTickCount(),
+                      (unsigned long)prvReadSstatus(),
+                      (unsigned long)ullSpinCount,
+                      (unsigned long)ulBlinkCount,
+                      (unsigned long)g_m_shim_timer_irqs,
+                      (unsigned long)g_m_shim_sbi_calls,
+                      (unsigned long)g_smode_ext_irqs,
+                      (unsigned long)ulDdrPass,
+                      (unsigned long)ulDdrFail,
+                      (unsigned long)xPortGetFreeHeapSize());
         }
     }
 }
@@ -211,14 +247,11 @@ static void prvDdrCheck(uint32_t buf, size_t offset, uint64_t value, const sv39_
     }
     else
     {
-        char line[160];
         ulDdrFail++;
-        snprintf(line, sizeof(line),
-                 "[S] DDR MISMATCH buf%lu VA 0x%lx PA 0x%lx wrote 0x%lx read 0x%lx phys 0x%lx (err %ld)\r\n",
-                 (unsigned long)buf, (unsigned long)(uintptr_t)va, (unsigned long)pa,
-                 (unsigned long)value, (unsigned long)readback,
-                 (unsigned long)phys.value, (long)phys.error);
-        prvPrint(line);
+        prvPrintf("[S] DDR MISMATCH buf%lu VA 0x%lx PA 0x%lx wrote 0x%lx read 0x%lx phys 0x%lx (err %ld)\r\n",
+                  (unsigned long)buf, (unsigned long)(uintptr_t)va, (unsigned long)pa,
+                  (unsigned long)value, (unsigned long)readback,
+                  (unsigned long)phys.value, (long)phys.error);
     }
 }
 
@@ -246,6 +279,31 @@ static void vDdrTask(void *pvParameters)
     }
 }
 
+static void vHeartbeatTask(void *pvParameters)
+{
+    (void)pvParameters;
+    TickType_t xLastWake = xTaskGetTickCount();
+    uint32_t ulBeat = 0U;
+
+    for (;;)
+    {
+        vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(HEARTBEAT_PERIOD_MS));
+        ulBeat++;
+
+        const TickType_t xNow = xTaskGetTickCount();
+        const unsigned long ulSeconds = (unsigned long)(xNow / configTICK_RATE_HZ);
+
+        prvPrintf("[S] heartbeat #%lu: uptime %02lu:%02lu:%02lu (tick %lu), "
+                  "heap free %lu (min %lu), stack headroom %lu words\r\n",
+                  (unsigned long)ulBeat,
+                  ulSeconds / 3600U, (ulSeconds / 60U) % 60U, ulSeconds % 60U,
+                  (unsigned long)xNow,
+                  (unsigned long)xPortGetFreeHeapSize(),
+                  (unsigned long)xPortGetMinimumEverFreeHeapSize(),
+                  (unsigned long)uxTaskGetStackHighWaterMark(NULL));
+    }
+}
+
 static void vSpinTask(void *pvParameters)
 {
     (void)pvParameters;
@@ -265,28 +323,23 @@ void s_mode_main(void)
     __asm volatile ("csrw stvec, %0" :: "r"((uintptr_t)&freertos_risc_v_trap_handler));
 
     {
-        char line[128];
         sv39_layout_t l;
 
         sv39_get_layout(&l);
 
-        snprintf(line, sizeof(line), "[S] s_mode_main: sstatus=0x%lx (SPP/SIE clear, FS on)\r\n",
-                 (unsigned long)prvReadSstatus());
-        prvPrint(line);
-        snprintf(line, sizeof(line), "[S] Sv39 on: satp=0x%lx, running at 0x%lx (s_mode_main)\r\n",
-                 (unsigned long)prvReadSatp(), (unsigned long)(uintptr_t)&s_mode_main);
-        prvPrint(line);
-        snprintf(line, sizeof(line), "[S]   L2LIM VA 0x%lx -> PA 0x%lx\r\n",
-                 (unsigned long)l.l2lim_va, (unsigned long)l.l2lim_pa);
-        prvPrint(line);
+        prvPrintf("[S] s_mode_main: sstatus=0x%lx (SPP/SIE clear, FS on)\r\n",
+                  (unsigned long)prvReadSstatus());
+        prvPrintf("[S] Sv39 on: satp=0x%lx, running at 0x%lx (s_mode_main)\r\n",
+                  (unsigned long)prvReadSatp(), (unsigned long)(uintptr_t)&s_mode_main);
+        prvPrintf("[S]   L2LIM VA 0x%lx -> PA 0x%lx\r\n",
+                  (unsigned long)l.l2lim_va, (unsigned long)l.l2lim_pa);
         for (uint32_t b = 0U; b < DDR_BUFFER_COUNT; b++)
         {
             uintptr_t va = (uintptr_t)g_ddr_buffer[b];
-            snprintf(line, sizeof(line), "[S]   DDR buf%lu VA 0x%lx -> PA 0x%lx (%lu MiB)\r\n",
-                     (unsigned long)b, (unsigned long)va,
-                     (unsigned long)(l.ddr_pa + (va - l.ddr_va)),
-                     (unsigned long)(DDR_BUFFER_SIZE >> 20));
-            prvPrint(line);
+            prvPrintf("[S]   DDR buf%lu VA 0x%lx -> PA 0x%lx (%lu MiB)\r\n",
+                      (unsigned long)b, (unsigned long)va,
+                      (unsigned long)(l.ddr_pa + (va - l.ddr_va)),
+                      (unsigned long)(DDR_BUFFER_SIZE >> 20));
         }
     }
 
@@ -294,11 +347,14 @@ void s_mode_main(void)
 
     xEventQueue = xQueueCreate(8, sizeof(uint8_t));
     configASSERT(xEventQueue != NULL);
+    xConsoleMutex = xSemaphoreCreateMutex();
+    configASSERT(xConsoleMutex != NULL);
 
     xOk &= xTaskCreate(vConsoleTask, "console", 1024, NULL, 2, NULL);
     xOk &= xTaskCreate(vBlinkTask, "blink", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
     xOk &= xTaskCreate(vSpinTask, "spin", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY, NULL);
     xOk &= xTaskCreate(vDdrTask, "ddr", 512, NULL, 1, NULL);
+    xOk &= xTaskCreate(vHeartbeatTask, "heartbeat", 512, NULL, 1, NULL);
     configASSERT(xOk == pdPASS);
 
     prvPrint("[S] starting scheduler\r\n");
