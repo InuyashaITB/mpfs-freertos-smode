@@ -91,6 +91,27 @@ static void m_shim_set_timer(uint64_t stime_value)
     (void)set_csr(mie, MIP_MTIP);
 }
 
+/* Only the calling hart runs S-mode, so an IPI may only target itself.
+ * hart_mask_base == -1 means "all harts". Setting SSIP from M-mode (a write
+ * to mip) also makes Renode re-check interrupts, which an S-mode write to
+ * sip does not. */
+static long m_shim_send_ipi(uintptr_t hart_mask, uintptr_t hart_mask_base)
+{
+    uint64_t hart_id = read_csr(mhartid);
+
+    if ((uintptr_t)-1 != hart_mask_base)
+    {
+        if ((hart_id < hart_mask_base) || ((hart_id - hart_mask_base) >= 64U) ||
+            (hart_mask != (1UL << (hart_id - hart_mask_base))))
+        {
+            return SBI_ERR_INVALID_PARAM;
+        }
+    }
+
+    (void)set_csr(mip, MIP_SSIP);
+    return SBI_SUCCESS;
+}
+
 static void m_shim_sbi(m_shim_frame_t *f)
 {
     uintptr_t eid = f->a7;
@@ -106,6 +127,17 @@ static void m_shim_sbi(m_shim_frame_t *f)
             if (SBI_TIME_SET_TIMER == fid)
             {
                 m_shim_set_timer((uint64_t)f->a0);
+            }
+            else
+            {
+                error = SBI_ERR_NOT_SUPPORTED;
+            }
+            break;
+
+        case SBI_EXT_IPI:
+            if (SBI_IPI_SEND_IPI == fid)
+            {
+                error = m_shim_send_ipi(f->a0, f->a1);
             }
             else
             {
@@ -161,7 +193,8 @@ static void m_shim_sbi(m_shim_frame_t *f)
                     value = 1;
                     break;
                 case SBI_BASE_PROBE_EXTENSION:
-                    value = ((SBI_EXT_TIME == f->a0) || (SBI_EXT_BASE == f->a0) ||
+                    value = ((SBI_EXT_TIME == f->a0) || (SBI_EXT_IPI == f->a0) ||
+                             (SBI_EXT_BASE == f->a0) ||
                              (SBI_EXT_MPFS_SHIM == f->a0)) ? 1 : 0;
                     break;
                 default:

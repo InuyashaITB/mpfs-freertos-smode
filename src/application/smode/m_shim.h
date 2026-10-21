@@ -8,8 +8,8 @@
  *   - m_shim_enter_smode(): configures delegation, PMP, counters and the
  *     M-mode trap vector, then drops the calling hart to S-mode with mret.
  *   - After that, M-mode only runs from traps:
- *       * SBI ecalls from S-mode (TIME.set_timer, legacy set_timer,
- *         legacy console_putchar, BASE probe)
+ *       * SBI ecalls from S-mode (TIME.set_timer, IPI.send_ipi to self,
+ *         legacy set_timer, legacy console_putchar, BASE probe)
  *       * machine timer interrupt -> forwarded to S-mode as sip.STIP
  *       * anything else is fatal: reported on MMUART1 and the hart is parked.
  */

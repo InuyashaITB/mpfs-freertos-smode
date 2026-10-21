@@ -24,6 +24,10 @@
 #include "smode/smode_plic.h"
 #include "smode/smode_irq.h"
 
+#if (configPORT_YIELD_VIA_SBI_IPI == 1) && (configSBI_HART_ID != SMODE_HART)
+#error "configSBI_HART_ID (FreeRTOSConfig.h) must equal SMODE_HART (smode_plic.h)"
+#endif
+
 /* HAL table of PLIC handlers (mss_mtrap.c). */
 extern uint8_t (*ext_irq_handler_table[PLIC_NUM_SOURCES])(void);
 
@@ -118,6 +122,18 @@ void freertos_risc_v_application_interrupt_handler(uintptr_t scause, uintptr_t s
                 SPLIC_disable((PLIC_IRQn_Type)irq);
             }
         }
+
+#if (configPORT_YIELD_VIA_SBI_IPI == 1)
+        /* A task may have pended a yield (SSIP) that was still waiting when
+         * this interrupt was taken (SEIP is taken first). On Renode, the PLIC
+         * line dropping on claim clears the core's interrupt-check flag, so
+         * that SSIP would wait for the next timer edge. Pend it again through
+         * M-mode so it is taken on sret. */
+        if (0U != (read_csr(sip) & MIP_SSIP))
+        {
+            portYIELD();
+        }
+#endif
 
         portYIELD_FROM_ISR(xYieldRequired);
         return;
