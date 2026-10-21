@@ -10,6 +10,7 @@
  * Only what this project needs is implemented by the shim:
  *   BASE   (0x10)        get_spec_version, get_impl_id, probe_extension
  *   TIME   (0x54494D45)  set_timer
+ *   IPI    (0x735049)    send_ipi, to the calling hart only (sets SSIP)
  *   legacy (0x00)        set_timer
  *   legacy (0x01)        console_putchar (to MMUART1, polled)
  */
@@ -21,6 +22,7 @@
 #define SBI_EXT_LEGACY_CONSOLE_PUTCHAR  0x01UL
 #define SBI_EXT_BASE                    0x10UL
 #define SBI_EXT_TIME                    0x54494D45UL
+#define SBI_EXT_IPI                     0x735049UL
 
 #define SBI_BASE_GET_SPEC_VERSION       0UL
 #define SBI_BASE_GET_IMPL_ID            1UL
@@ -29,8 +31,11 @@
 
 #define SBI_TIME_SET_TIMER              0UL
 
+#define SBI_IPI_SEND_IPI                0UL
+
 #define SBI_SUCCESS                     0L
 #define SBI_ERR_NOT_SUPPORTED           (-2L)
+#define SBI_ERR_INVALID_PARAM           (-3L)
 
 #ifndef __ASSEMBLER__
 #include <stdint.h>

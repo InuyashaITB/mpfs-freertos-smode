@@ -136,6 +136,20 @@ Behavioural differences to know about:
 * `SSIE` must be enabled in `sie` (done in `xPortStartScheduler()`) and SSIP
   must be delegated in `mideleg`. Otherwise `portYIELD()` does nothing.
 
+**Renode 1.13 (SoftConsole v2022.2): `configPORT_YIELD_VIA_SBI_IPI`.** That
+Renode's RISC-V core only re-checks pending interrupts when an interrupt line
+changes or M-mode writes `mip`; an S-mode write to `sip` sets the bit but is
+not noticed until the next timer edge (see `CSR_SIP` vs `CSR_MIP` in tlib's
+`arch/riscv/op_helper.c`). The yield is then taken up to one tick late and
+the task keeps running after it has been put on a delayed or event list:
+`vTaskDelay()` returns at once, and a blocking `xQueueReceive()` inserts the
+same list item twice and hangs in `vListInsert()`. With
+`configPORT_YIELD_VIA_SBI_IPI = 1` (set in this project's
+`FreeRTOSConfig.h`), `portYIELD()` instead makes an SBI `IPI.send_ipi` call
+to its own hart (`configSBI_HART_ID`) and M-mode sets `mip.SSIP`, which
+Renode does act on. The trap handling is unchanged (still scause 1, handler
+clears SSIP). Costs one ecall per yield; set it to 0 on hardware.
+
 ### 3.3 Exceptions
 
 **M-mode port:** `mcause` 11 means yield; any other exception goes to

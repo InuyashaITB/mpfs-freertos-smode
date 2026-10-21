@@ -138,6 +138,28 @@ static void prvSbiSetTimer( uint64_t ullStimeValue )
 }
 /*-----------------------------------------------------------*/
 
+#if ( configPORT_YIELD_VIA_SBI_IPI == 1 )
+
+/* SBI IPI extension, function send_ipi (SBI v0.2+). */
+    #define portSBI_EXT_IPI         0x735049UL
+    #define portSBI_IPI_SEND_IPI    0UL
+
+    void vPortYieldViaSbiIpi( void )
+    {
+        register uintptr_t a0 __asm__ ( "a0" ) = 1UL;                             /* hart_mask: bit 0 ... */
+        register uintptr_t a1 __asm__ ( "a1" ) = ( uintptr_t ) configSBI_HART_ID; /* ... relative to this hart. */
+        register uintptr_t a6 __asm__ ( "a6" ) = portSBI_IPI_SEND_IPI;
+        register uintptr_t a7 __asm__ ( "a7" ) = portSBI_EXT_IPI;
+
+        __asm volatile ( "ecall"
+                         : "+r" ( a0 ), "+r" ( a1 )
+                         : "r" ( a6 ), "r" ( a7 )
+                         : "memory" );
+    }
+
+#endif /* configPORT_YIELD_VIA_SBI_IPI */
+/*-----------------------------------------------------------*/
+
 static uint64_t prvReadMtime( void )
 {
     #if __riscv_xlen == 64

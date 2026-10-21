@@ -17,7 +17,7 @@ comparison of M-mode and S-mode handling, is in
 | Global interrupt enable | `mstatus.MIE` (bit 3) | `sstatus.SIE` (bit 1) |
 | Initial task status | `MPIE=1, MPP=M` (0x1880) | `SPIE=1, SPP=S` (0x120) |
 | Trap vector | `mtvec` | `stvec` (direct mode), set by the application |
-| Yield | `ecall` (mcause 11) | set `sip.SSIP` (scause 1); handler clears it |
+| Yield | `ecall` (mcause 11) | set `sip.SSIP` (scause 1); handler clears it. With `configPORT_YIELD_VIA_SBI_IPI = 1`, SSIP is set by M-mode via SBI `IPI.send_ipi` to self |
 | Tick | machine timer (mcause 7), port writes `mtimecmp` | supervisor timer (scause 5), port calls SBI `TIME.set_timer` |
 | Interrupt enables at start | `mie`: MTIE + MEIE | `sie`: SSIE + STIE + SEIE |
 | Other interrupts / exceptions | weak `freertos_risc_v_application_*_handler` | same, with `a0 = scause`, `a1 = sepc` (+4 for exceptions) |
@@ -26,6 +26,11 @@ Why the yield is not an `ecall`: an `ecall` from S-mode traps to M-mode,
 where it is used for SBI. A pended supervisor software interrupt gives the same
 behaviour as PendSV on Cortex-M: immediate when interrupts are enabled,
 deferred until the critical section ends otherwise.
+
+`configPORT_YIELD_VIA_SBI_IPI` (default 0) works around emulators that do
+not act on S-mode writes to `sip`, such as Renode 1.13: see
+[`src/middleware/README.md`](../../../../README.md) section 3.2. It needs
+`configSBI_HART_ID` and an SBI `IPI.send_ipi` implementation in M-mode.
 
 ## Requirements on M-mode firmware
 
@@ -41,6 +46,9 @@ Whatever runs in M-mode (OpenSBI, or the small shim in
    and `mtime` (`configMTIME_BASE_ADDRESS`).
 4. Enter S-mode with `sstatus.SIE = 0` and `sstatus.FS != 0` when
    `configENABLE_FPU = 1`.
+
+   If `configPORT_YIELD_VIA_SBI_IPI = 1`: also implement SBI `IPI.send_ipi`
+   (EID `0x735049`, FID 0) for the calling hart by setting `mip.SSIP`.
 
 ## Application responsibilities
 

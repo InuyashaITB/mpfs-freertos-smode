@@ -282,7 +282,7 @@ stateDiagram-v2
     M_boot: M-mode boot<br/>mss_entry.S → u54_1()
     M_boot --> S_kernel: mret in m_shim_enter_smode()
     S_kernel: S-mode<br/>s_mode_main() / FreeRTOS
-    S_kernel --> M_shim: ecall (SBI)<br/>machine timer IRQ<br/>undelegated exception
+    S_kernel --> M_shim: ecall (SBI set_timer, send_ipi)<br/>machine timer IRQ<br/>undelegated exception
     M_shim: M-mode shim<br/>m_shim_trap_vector
     M_shim --> S_kernel: mret (SBI done / STIP raised)
     M_shim --> Parked: unhandled trap<br/>m_shim_fatal()
@@ -325,8 +325,12 @@ sequenceDiagram
 
 Other trap paths after the handover:
 
-* **Yield** – `portYIELD()` sets `sip.SSIP`; delegated, taken as scause 1 by
-  the port, which clears SSIP and switches context. No M-mode involvement.
+* **Yield** – with `configPORT_YIELD_VIA_SBI_IPI = 1` (this project's
+  default, for Renode 1.13) `portYIELD()` makes an SBI `IPI.send_ipi` ecall
+  to its own hart and the shim sets `mip.SSIP`; with 0 it writes `sip.SSIP`
+  directly. Either way SSIP is delegated and taken as scause 1 by the port,
+  which clears it and switches context. See `src/middleware/README.md`
+  section 3.2 for why Renode needs the M-mode write.
 * **PLIC** – sources 43/44/118 assert SEIP on hart 1's S-context; delegated,
   `smode_irq.c` claims/completes on the S-context and calls the HAL handler
   table entries.

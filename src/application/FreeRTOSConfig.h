@@ -39,6 +39,16 @@
  * task context has been saved. */
 #define configISR_STACK_SIZE_WORDS                  ( 512 )
 
+/* Yield through SBI IPI.send_ipi to this hart (M-mode sets mip.SSIP) instead
+ * of writing sip.SSIP from S-mode. Needed on Renode 1.13 (SoftConsole
+ * v2022.2): its RISC-V core does not re-check interrupts after an S-mode
+ * write to sip, so a yield is only taken at the next timer edge, up to one
+ * tick late. Blocking calls then return before the task has switched out
+ * (vTaskDelay() returning at once, list corruption in vListInsert()).
+ * Set to 0 on hardware. configSBI_HART_ID must match SMODE_HART. */
+#define configPORT_YIELD_VIA_SBI_IPI                1
+#define configSBI_HART_ID                           1
+
 /*-----------------------------------------------------------
  * Kernel
  *----------------------------------------------------------*/

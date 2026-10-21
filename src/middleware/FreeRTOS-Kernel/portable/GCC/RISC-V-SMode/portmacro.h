@@ -29,6 +29,9 @@
  *  - portYIELD() pends a supervisor software interrupt (sip.SSIP) instead of
  *    executing ecall, because an ecall from S-mode traps to M-mode, where it
  *    is used for SBI calls (set_timer).
+ *  - optionally (configPORT_YIELD_VIA_SBI_IPI = 1) portYIELD() asks M-mode to
+ *    set SSIP with an SBI IPI.send_ipi call to this hart instead, for
+ *    emulators that ignore S-mode writes to sip (Renode 1.13).
  */
 
 #ifndef PORTMACRO_H
@@ -104,7 +107,20 @@ extern void vTaskSwitchContext( void );
  * taken immediately, otherwise it is taken as soon as the critical section is
  * exited - the same semantics as PendSV on Cortex-M. The trap handler clears
  * SSIP and switches context. */
-#define portYIELD()    __asm volatile ( "csrs sip, %0" ::"r" ( portSIP_SSIP ) : "memory" )
+#ifndef configPORT_YIELD_VIA_SBI_IPI
+    #define configPORT_YIELD_VIA_SBI_IPI    0
+#endif
+
+#if ( configPORT_YIELD_VIA_SBI_IPI == 1 )
+    #ifndef configSBI_HART_ID
+        #error "configSBI_HART_ID must be defined when configPORT_YIELD_VIA_SBI_IPI is 1"
+    #endif
+    /* Same semantics, but SSIP is set by M-mode (SBI send_ipi to this hart). */
+    extern void vPortYieldViaSbiIpi( void );
+    #define portYIELD()    vPortYieldViaSbiIpi()
+#else
+    #define portYIELD()    __asm volatile ( "csrs sip, %0" ::"r" ( portSIP_SSIP ) : "memory" )
+#endif
 
 #define portEND_SWITCHING_ISR( xSwitchRequired ) \
     do                                           \

@@ -35,6 +35,10 @@ After the handoff, M-mode on U54_1 only runs for traps from S-mode:
   `BASE` probe): write `mtimecmp[1]`, clear `STIP`, enable `MTIE`.
 * **Machine timer interrupt**: disable `MTIE`, raise `sip.STIP`. FreeRTOS
   takes it as its tick (scause 5).
+* **SBI ecall** `IPI.send_ipi` to this hart: set `mip.SSIP`. This is the
+  FreeRTOS yield while `configPORT_YIELD_VIA_SBI_IPI = 1`, the default here
+  because Renode 1.13 ignores S-mode writes to `sip` (see
+  `src/middleware/README.md` section 3.2). Set it to 0 on hardware.
 * Anything else: printed on UART1 as `*** M-mode shim: unhandled trap ...`
   and the hart is parked.
 
@@ -113,12 +117,17 @@ What each counter proves:
   `g_m_shim_fault` (unexpected M-mode traps), `g_hart_parked[]`.
 * Breakpoint exceptions are deliberately not delegated to S-mode.
 * Renode macros from `macros.resc` work as before, e.g. `runMacro $MCsrU54_1`.
+* If `vTaskDelay()` returns immediately, or the hart spins in
+  `vListInsert()` with `xTickCount` stuck, the yield is not being taken:
+  check that `configPORT_YIELD_VIA_SBI_IPI` is 1 when running on Renode.
 
 ## Limitations / next steps
 
 * **PMP is wide open** (entry 0 = whole address space RWX). Fine for Renode;
-  on hardware restrict it to what S-mode needs. The HAL's `init_pmp(1)`
-  settings for entry 0..7 are replaced.
+  on hardware restrict it to what S-mode needs. Note that the HAL's
+  `init_pmp(1)` has already locked entry 0 (`pmpcfg0 = 0x9F`) when the shim
+  runs, so the shim's write to entry 0 has no effect; see
+  `docs/boot-to-smode.md` section 5.
 * **No MMU** (`satp = 0`). Paging can be added later; the port does not care.
 * **No OpenSBI.** The shim implements only what FreeRTOS needs. If you later
   boot through HSS + OpenSBI, drop `m_shim.*` and enter `s_mode_main()` from
