@@ -67,7 +67,7 @@
  *----------------------------------------------------------*/
 #define configSUPPORT_STATIC_ALLOCATION             0
 #define configSUPPORT_DYNAMIC_ALLOCATION            1
-#define configTOTAL_HEAP_SIZE                       ( 24U * 1024U )
+#define configTOTAL_HEAP_SIZE                       ( 32U * 1024U )
 #define configAPPLICATION_ALLOCATED_HEAP            0
 
 /*-----------------------------------------------------------
