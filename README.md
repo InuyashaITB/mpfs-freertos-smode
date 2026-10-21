@@ -41,6 +41,7 @@ After the handoff, M-mode on U54_1 only runs for traps from S-mode:
 |---|---|
 | `src/middleware/FreeRTOS-Kernel/` | Kernel V11.3.2 (core files, `include/`, `MemMang/heap_4.c`) |
 | `.../portable/GCC/RISC-V-SMode/` | The S-mode port (see its README.md) |
+| `src/middleware/README.md` | Deviations from the upstream FreeRTOS RISC-V port, M-mode vs S-mode |
 | `src/application/FreeRTOSConfig.h` | 1 kHz tick, mtime 1 MHz @ 0x0200BFF8, FPU context on, 24 KB heap |
 | `src/application/smode/m_shim.*`, `m_shim_trap.S` | M-mode shim: handoff, SBI timer, MTIP→STIP |
 | `src/application/smode/smode_plic.h` | PLIC helpers for the hart's S context (no `mhartid`) |

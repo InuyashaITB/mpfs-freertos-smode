@@ -5,6 +5,10 @@ Derived from `portable/GCC/RISC-V` of FreeRTOS-Kernel **V11.3.2**
 critical nesting, FPU/VPU handling and ISR-stack switch are unchanged; only the
 privilege-specific parts differ.
 
+The full list of deviations from upstream, and a section-by-section
+comparison of M-mode and S-mode handling, is in
+[`src/middleware/README.md`](../../../../README.md).
+
 ## What changed vs. the M-mode port
 
 | Area | M-mode port | This port |
