@@ -16,6 +16,14 @@
  *   blink   (prio 1): binary counter on the four LEDs (GPIO2_16..19), 250 ms.
  *   spin    (prio 0): never blocks, shares the idle priority; its counter
  *                     only advances if tick-driven time slicing works.
+ *   ddr     (prio 1): once a second writes a pattern at the start, middle and
+ *                     last qword of each 1 GiB DDR buffer through its virtual
+ *                     address, reads it back, and has M-mode (no translation)
+ *                     read the expected physical address to confirm the
+ *                     Sv39 mapping.
+ *
+ * By the time s_mode_main() runs, smode_start.S has turned the Sv39 MMU on and
+ * this code executes at its virtual (high) addresses.
  */
 
 #include <stdio.h>
@@ -30,6 +38,9 @@
 #include "drivers/mss/mss_mmuart/mss_uart.h"
 #include "smode/m_shim.h"
 #include "smode/smode_irq.h"
+#include "smode/sv39.h"
+#include "smode/sbi.h"
+#include "ddr/ddr_buffers.h"
 
 extern void freertos_risc_v_trap_handler(void);
 
@@ -43,6 +54,8 @@ typedef enum
 static QueueHandle_t xEventQueue = NULL;
 static volatile uint64_t ullSpinCount = 0U;
 static volatile uint32_t ulBlinkCount = 0U;
+static volatile uint32_t ulDdrPass = 0U;
+static volatile uint32_t ulDdrFail = 0U;
 
 /*------------------------------------------------------------------------------
  * Console helpers. Only the console task prints after the scheduler starts.
@@ -56,6 +69,13 @@ static uintptr_t prvReadSstatus(void)
 {
     uintptr_t v;
     __asm volatile ("csrr %0, sstatus" : "=r"(v));
+    return v;
+}
+
+static uintptr_t prvReadSatp(void)
+{
+    uintptr_t v;
+    __asm volatile ("csrr %0, satp" : "=r"(v));
     return v;
 }
 
@@ -141,7 +161,7 @@ static void vConsoleTask(void *pvParameters)
             xLastStatus += pdMS_TO_TICKS(1000);
             snprintf(line, sizeof(line),
                      "[S] tick=%lu sstatus=0x%lx spin=%lu blink=%lu "
-                     "mtimer->stip=%lu sbi=%lu ext=%lu heap_free=%lu\r\n",
+                     "mtimer->stip=%lu sbi=%lu ext=%lu ddr_ok=%lu ddr_bad=%lu heap_free=%lu\r\n",
                      (unsigned long)xTaskGetTickCount(),
                      (unsigned long)prvReadSstatus(),
                      (unsigned long)ullSpinCount,
@@ -149,6 +169,8 @@ static void vConsoleTask(void *pvParameters)
                      (unsigned long)g_m_shim_timer_irqs,
                      (unsigned long)g_m_shim_sbi_calls,
                      (unsigned long)g_smode_ext_irqs,
+                     (unsigned long)ulDdrPass,
+                     (unsigned long)ulDdrFail,
                      (unsigned long)xPortGetFreeHeapSize());
             prvPrint(line);
         }
@@ -172,6 +194,58 @@ static void vBlinkTask(void *pvParameters)
     }
 }
 
+/* Write through the virtual address, read back, and compare with what M-mode
+ * sees at the physical address the page table should map it to. */
+static void prvDdrCheck(uint32_t buf, size_t offset, uint64_t value, const sv39_layout_t *l)
+{
+    volatile uint64_t *va = (volatile uint64_t *)(void *)(g_ddr_buffer[buf] + offset);
+    uint64_t pa = (uint64_t)l->ddr_pa + ((uintptr_t)va - l->ddr_va);
+
+    *va = value;
+    uint64_t readback = *va;
+    sbi_ret_t phys = sbi_read_phys_u64(pa);
+
+    if ((readback == value) && (0 == phys.error) && ((uint64_t)phys.value == value))
+    {
+        ulDdrPass++;
+    }
+    else
+    {
+        char line[160];
+        ulDdrFail++;
+        snprintf(line, sizeof(line),
+                 "[S] DDR MISMATCH buf%lu VA 0x%lx PA 0x%lx wrote 0x%lx read 0x%lx phys 0x%lx (err %ld)\r\n",
+                 (unsigned long)buf, (unsigned long)(uintptr_t)va, (unsigned long)pa,
+                 (unsigned long)value, (unsigned long)readback,
+                 (unsigned long)phys.value, (long)phys.error);
+        prvPrint(line);
+    }
+}
+
+static void vDdrTask(void *pvParameters)
+{
+    (void)pvParameters;
+    static const size_t offsets[3] = { 0U, DDR_BUFFER_SIZE / 2U, DDR_BUFFER_SIZE - 8U };
+    sv39_layout_t l;
+    uint64_t seq = 0U;
+
+    sv39_get_layout(&l);
+
+    for (;;)
+    {
+        for (uint32_t b = 0U; b < DDR_BUFFER_COUNT; b++)
+        {
+            for (uint32_t i = 0U; i < 3U; i++)
+            {
+                uint64_t value = 0xD0D0000000000000ULL | (seq << 8) | ((uint64_t)b << 4) | i;
+                prvDdrCheck(b, offsets[i], value, &l);
+            }
+        }
+        seq++;
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 static void vSpinTask(void *pvParameters)
 {
     (void)pvParameters;
@@ -191,10 +265,29 @@ void s_mode_main(void)
     __asm volatile ("csrw stvec, %0" :: "r"((uintptr_t)&freertos_risc_v_trap_handler));
 
     {
-        char line[96];
+        char line[128];
+        sv39_layout_t l;
+
+        sv39_get_layout(&l);
+
         snprintf(line, sizeof(line), "[S] s_mode_main: sstatus=0x%lx (SPP/SIE clear, FS on)\r\n",
                  (unsigned long)prvReadSstatus());
         prvPrint(line);
+        snprintf(line, sizeof(line), "[S] Sv39 on: satp=0x%lx, running at 0x%lx (s_mode_main)\r\n",
+                 (unsigned long)prvReadSatp(), (unsigned long)(uintptr_t)&s_mode_main);
+        prvPrint(line);
+        snprintf(line, sizeof(line), "[S]   L2LIM VA 0x%lx -> PA 0x%lx\r\n",
+                 (unsigned long)l.l2lim_va, (unsigned long)l.l2lim_pa);
+        prvPrint(line);
+        for (uint32_t b = 0U; b < DDR_BUFFER_COUNT; b++)
+        {
+            uintptr_t va = (uintptr_t)g_ddr_buffer[b];
+            snprintf(line, sizeof(line), "[S]   DDR buf%lu VA 0x%lx -> PA 0x%lx (%lu MiB)\r\n",
+                     (unsigned long)b, (unsigned long)va,
+                     (unsigned long)(l.ddr_pa + (va - l.ddr_va)),
+                     (unsigned long)(DDR_BUFFER_SIZE >> 20));
+            prvPrint(line);
+        }
     }
 
     BaseType_t xOk = pdPASS;
@@ -205,6 +298,7 @@ void s_mode_main(void)
     xOk &= xTaskCreate(vConsoleTask, "console", 1024, NULL, 2, NULL);
     xOk &= xTaskCreate(vBlinkTask, "blink", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
     xOk &= xTaskCreate(vSpinTask, "spin", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY, NULL);
+    xOk &= xTaskCreate(vDdrTask, "ddr", 512, NULL, 1, NULL);
     configASSERT(xOk == pdPASS);
 
     prvPrint("[S] starting scheduler\r\n");

@@ -1,0 +1,11 @@
+// Renode's polarfire-soc.repl maps 1 GiB of DDR at the 38-bit cached window
+// (0x10_0000_0000). mpfs-lim-sv39.ld places 3 GiB there, so add the next
+// two GiB right after it. Loaded by the project's Renode debug launcher
+// (monitor machine LoadPlatformDescription @...).
+// Only the cached window is extended; the 0x14_/0x18_ aliases stay 1 GiB.
+
+ddr_38bit_cached_gib1: Memory.MappedMemory @ sysbus 0x1040000000
+    size: 0x40000000
+
+ddr_38bit_cached_gib2: Memory.MappedMemory @ sysbus 0x1080000000
+    size: 0x40000000

@@ -26,6 +26,9 @@ extern volatile uint64_t g_smode_ext_irqs;
  * context switch (if any) happens when the PLIC dispatch loop finishes. */
 void vSmodeYieldFromISR(BaseType_t xHigherPriorityTaskWoken);
 
+/* Called from smode_start.S on a trap before the scheduler starts. */
+void smode_early_trap_report(uintptr_t scause, uintptr_t sepc, uintptr_t stval);
+
 /* Port hooks (called from portASM.S). */
 void freertos_risc_v_application_interrupt_handler(uintptr_t scause, uintptr_t sepc);
 void freertos_risc_v_application_exception_handler(uintptr_t scause, uintptr_t sepc_plus_4);

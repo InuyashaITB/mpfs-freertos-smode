@@ -152,6 +152,24 @@ void freertos_risc_v_application_exception_handler(uintptr_t scause, uintptr_t s
     prvHalt();
 }
 
+/* Called from smode_start.S before FreeRTOS installs its trap handler, with
+ * the MMU either still off or just switched on. */
+void smode_early_trap_report(uintptr_t scause, uintptr_t sepc, uintptr_t stval)
+{
+    g_smode_fault.scause = scause;
+    g_smode_fault.sepc = sepc;
+    g_smode_fault.stval = stval;
+
+    prvPuts("\r\n*** S-mode early trap (MMU bring-up) scause=");
+    prvPutHex(scause);
+    prvPuts(" sepc=");
+    prvPutHex(sepc);
+    prvPuts(" stval=");
+    prvPutHex(stval);
+    prvPuts("\r\n");
+    prvHalt();
+}
+
 /*------------------------------------------------------------------------------
  * FreeRTOS hooks
  */

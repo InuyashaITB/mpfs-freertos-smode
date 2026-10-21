@@ -26,7 +26,8 @@ typedef struct
     uintptr_t t0, t1, t2;
     uintptr_t a0, a1, a2, a3, a4, a5, a6, a7;
     uintptr_t t3, t4, t5, t6;
-    uintptr_t pad[2];
+    uintptr_t gp;           /* interrupted gp (S-mode may use the virtual alias) */
+    uintptr_t pad;
 } m_shim_frame_t;
 
 /* Last fatal M-mode trap, for inspection in the debugger. */

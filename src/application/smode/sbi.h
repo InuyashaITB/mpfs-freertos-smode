@@ -12,6 +12,8 @@
  *   TIME   (0x54494D45)  set_timer
  *   legacy (0x00)        set_timer
  *   legacy (0x01)        console_putchar (to MMUART1, polled)
+ *   SHIM   (0x0A000000)  read_phys_u64 - debug: read a physical qword in the
+ *                        38-bit cached DDR window (firmware-specific range)
  */
 
 #ifndef SMODE_SBI_H_
@@ -21,6 +23,7 @@
 #define SBI_EXT_LEGACY_CONSOLE_PUTCHAR  0x01UL
 #define SBI_EXT_BASE                    0x10UL
 #define SBI_EXT_TIME                    0x54494D45UL
+#define SBI_EXT_MPFS_SHIM               0x0A000000UL   /* firmware-specific space */
 
 #define SBI_BASE_GET_SPEC_VERSION       0UL
 #define SBI_BASE_GET_IMPL_ID            1UL
@@ -29,8 +32,11 @@
 
 #define SBI_TIME_SET_TIMER              0UL
 
+#define SBI_SHIM_READ_PHYS_U64          0UL     /* a0 = PA (8-byte aligned) -> value */
+
 #define SBI_SUCCESS                     0L
 #define SBI_ERR_NOT_SUPPORTED           (-2L)
+#define SBI_ERR_INVALID_ADDRESS         (-5L)
 
 #ifndef __ASSEMBLER__
 #include <stdint.h>
@@ -57,6 +63,13 @@ static inline sbi_ret_t sbi_call(uintptr_t eid, uintptr_t fid,
 
     sbi_ret_t ret = { (long)a0, (long)a1 };
     return ret;
+}
+
+/* Debug: read a 64-bit word at a physical address through M-mode (no
+ * translation). Limited by the shim to the 38-bit cached DDR window. */
+static inline sbi_ret_t sbi_read_phys_u64(uint64_t pa)
+{
+    return sbi_call(SBI_EXT_MPFS_SHIM, SBI_SHIM_READ_PHYS_U64, (uintptr_t)pa, 0UL);
 }
 
 static inline void sbi_console_putchar(char c)

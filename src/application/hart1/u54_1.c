@@ -11,7 +11,12 @@
  *      GPIO2 -> PLIC routing, and PLIC set-up for this hart's *supervisor*
  *      context (the HAL PLIC helpers only know the M-mode context).
  *   3. m_shim_enter_smode(): delegation, PMP, M-mode trap vector, mret to
- *      s_mode_main() (hart1/app_main.c) in S-mode.
+ *      smode_start (smode/smode_start.S) in S-mode, which turns the Sv39 MMU
+ *      on and continues in s_mode_main() (hart1/app_main.c) at the virtual
+ *      (high) alias of the image.
+ *
+ * Everything here runs in M-mode from the physical copy of L2LIM. Addresses
+ * taken in code are therefore physical, which is what mret needs.
  *
  * Interrupt wiring used by the demo (same as the original example and
  * Renode's polarfire-soc-icicle-board.resc):
@@ -27,11 +32,12 @@
 #include "smode/m_shim.h"
 #include "smode/smode_plic.h"
 
-/* S-mode kernel entry point, in hart1/app_main.c. */
-extern void s_mode_main(void);
+/* S-mode entry (MMU bring-up), in smode/smode_start.S. */
+extern void smode_start(void);
 
-/* Stack used by s_mode_main() until the scheduler starts. After that FreeRTOS
- * uses its own ISR stack (configISR_STACK_SIZE_WORDS) and task stacks. */
+/* Stack used by smode_start / s_mode_main() until the scheduler starts.
+ * After that FreeRTOS uses its own ISR stack (configISR_STACK_SIZE_WORDS)
+ * and task stacks. */
 #define S_BOOT_STACK_SIZE   (4096U)
 static uint8_t g_s_boot_stack[S_BOOT_STACK_SIZE] __attribute__((aligned(16)));
 
@@ -153,5 +159,5 @@ void u54_1(void)
 
     MSS_UART_polled_tx_string(&g_mss_uart1_lo, g_m_handoff);
 
-    m_shim_enter_smode(s_mode_main, (uintptr_t)&g_s_boot_stack[S_BOOT_STACK_SIZE]);
+    m_shim_enter_smode(smode_start, (uintptr_t)&g_s_boot_stack[S_BOOT_STACK_SIZE]);
 }

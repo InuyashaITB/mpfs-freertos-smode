@@ -13,6 +13,7 @@
 #include "drivers/mss/mss_mmuart/mss_uart.h"
 #include "smode/m_shim.h"
 #include "smode/sbi.h"
+#include "smode/sv39.h"
 
 #define M_SHIM_STACK_SIZE   (4096U)
 
@@ -123,6 +124,30 @@ static void m_shim_sbi(m_shim_frame_t *f)
             break;
         }
 
+        case SBI_EXT_MPFS_SHIM:
+            if (SBI_SHIM_READ_PHYS_U64 == fid)
+            {
+                /* Debug aid: only the DDR window from the linker script, and
+                 * only aligned qwords, so it cannot fault inside M-mode. */
+                sv39_layout_t l;
+                uint64_t pa = (uint64_t)f->a0;
+
+                sv39_get_layout(&l);
+                if ((0U != (pa & 7U)) || (pa < l.ddr_pa) || (pa >= (l.ddr_pa + l.ddr_size)))
+                {
+                    error = SBI_ERR_INVALID_ADDRESS;
+                }
+                else
+                {
+                    value = (long)*(volatile uint64_t *)(uintptr_t)pa;
+                }
+            }
+            else
+            {
+                error = SBI_ERR_NOT_SUPPORTED;
+            }
+            break;
+
         case SBI_EXT_BASE:
             switch (fid)
             {
@@ -136,7 +161,8 @@ static void m_shim_sbi(m_shim_frame_t *f)
                     value = 1;
                     break;
                 case SBI_BASE_PROBE_EXTENSION:
-                    value = ((SBI_EXT_TIME == f->a0) || (SBI_EXT_BASE == f->a0)) ? 1 : 0;
+                    value = ((SBI_EXT_TIME == f->a0) || (SBI_EXT_BASE == f->a0) ||
+                             (SBI_EXT_MPFS_SHIM == f->a0)) ? 1 : 0;
                     break;
                 default:
                     error = SBI_ERR_NOT_SUPPORTED;

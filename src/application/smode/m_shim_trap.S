@@ -40,6 +40,15 @@ m_shim_trap_vector:
     sd t4, 13*REGBYTES(sp)
     sd t5, 14*REGBYTES(sp)
     sd t6, 15*REGBYTES(sp)
+    sd gp, 16*REGBYTES(sp)
+
+    /* S-mode may run with gp pointing at the virtual alias of
+     * __global_pointer$, but M-mode runs from the physical copy with the MMU
+     * off: load M-mode's own gp (PC-relative, so the physical alias here). */
+    .option push
+    .option norelax
+    la gp, __global_pointer$
+    .option pop
 
     mv a0, sp                       /* a0 = m_shim_frame_t* */
     call m_shim_trap_handler
@@ -60,6 +69,7 @@ m_shim_trap_vector:
     ld t4, 13*REGBYTES(sp)
     ld t5, 14*REGBYTES(sp)
     ld t6, 15*REGBYTES(sp)
+    ld gp, 16*REGBYTES(sp)
 
     addi  sp, sp, (18*REGBYTES)
     csrrw sp, mscratch, sp          /* restore interrupted sp, mscratch = M-mode stack again */
