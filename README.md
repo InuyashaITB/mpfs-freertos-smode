@@ -70,7 +70,7 @@ After the handoff, M-mode on U54_1 only runs for traps from S-mode:
 | `src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld` | *(mmu-sv39)* Linker script with physical/virtual regions |
 | `renode/mpfs-ddr-38bit-cached-3gib.repl` | *(mmu-sv39)* Adds 2 GiB of DDR to Renode's platform |
 | `src/application/hart1/u54_1.c` | M-mode set-up + handoff (replaces the bare-metal demo) |
-| `src/application/hart1/app_main.c` | S-mode FreeRTOS demo tasks (console, blink, spin, heartbeat; *mmu-sv39*: ddr) and PLIC handlers |
+| `src/application/hart1/app_main.c` | S-mode FreeRTOS demo tasks (console, blink, spin, heartbeat; *mmu-sv39*: ddr, and spin plays "DDR Life" in DDR) and PLIC handlers |
 | `src/application/hart0/e51.c`, `hart2..4/u54_N.c` | Park the other harts |
 | `src/application/inc/hart_park.h` | `park_this_hart()` |
 | `src/boards/icicle-kit-es/platform_config/mpfs_hal_config/mss_sw_config.h` | `DDR_SUPPORT` commented out (Renode start-up; image runs from L2LIM) |
@@ -107,10 +107,10 @@ Expected on UART1:
 [S] scheduler running. Press 1, 2 or 3 to raise GPIO2_30, GPIO2_31 or F2M_0 interrupts.
 [S] tick=1000 sstatus=0x...4022 spin=... blink=4 mtimer->stip=1000 sbi=1010 ext=0 ddr_ok=9 ddr_bad=0 heap_free=...
 ...
-[S] heartbeat #1: uptime 00:00:30 (tick 30005), heap free ... (min ...), stack headroom ... words
+[S] heartbeat #1: uptime 00:00:05 (tick 5000), heap free ... (min ...), stack headroom ... words
 ```
 
-The `heartbeat` task prints every 30 s. All task output goes through
+The `heartbeat` task prints every 5 s. All task output goes through
 `prvPrintf()` in `app_main.c`, which holds a console mutex, so lines from
 different tasks never interleave.
 
@@ -125,8 +125,9 @@ What each counter proves:
 * `tick` advancing at 1000/s, and `mtimer->stip` tracking it: the M-mode shim
   forwards the machine timer as STIP and the S-mode tick handler re-arms it
   through SBI.
-* `spin` advancing: the `spin` task never blocks and shares priority 0 with
+* `spin` advancing: the `spin` task never sleeps and shares priority 0 with
   idle, so it only runs because of preemption and time slicing on the tick.
+  On this branch it counts DDR Life generations (below).
 * `blink` advancing every 250 ms: delays and context switches work.
 * `ext` advancing on 1/2/3: PLIC supervisor context → SEIP → S-mode dispatch.
 * `sstatus` low bits `0x22`: SIE=1 and SPIE=1 while a task runs in S-mode.
@@ -134,6 +135,51 @@ What each counter proves:
   middle and last qword of each 1 GiB buffer through its virtual address,
   read it back, and M-mode found the same value at the expected physical
   address (0x10_0000_0000 + n GiB + offset).
+
+### DDR Life (the `spin` task)
+
+`spin` plays Conway's Game of Life on a 64 x 32 torus whose state lives
+entirely in the 38-bit cached DDR window, reached only through the Sv39
+mapping:
+
+| What | Where | PA |
+|---|---|---|
+| grid A | `buf0` + 256 MiB | `0x10_1000_0000` |
+| grid B | `buf1` + 768 MiB | `0x10_7000_0000` |
+| history ring (hash + population of the last 64 generations) | last MiB of `buf2` | `0x10_BFF0_0000` |
+
+Each generation reads one grid and writes the other, 1.5 GiB apart. The
+history ring detects when the board repeats itself (still life, oscillator up
+to period 32, or extinction); the settled board runs for another 500
+generations and is then reseeded. The offsets avoid the qwords the `ddr` task
+probes.
+
+Every 10 s it prints the board, the population sparkline from the history
+ring, the settle state, the VA -> PA of each region, and a cross-check in
+which M-mode reads a qword with live cells at its physical address. In Renode
+it runs at about 340 generations/s:
+
+```
+[S] .- DDR Life - seed #5 - generation 572 --------------------------.
+[S] |                                                        ##      |
+[S] |                     #                                          |
+[S] |                    # #                         #               |
+[S] |                     #                         # #              |
+...
+[S] '----------------------------------------------------------------'
+[S]   population 73 (+6 born, -8 died)   337 gens/s, 10130 total
+[S]   last 48 gens [#*#%@###%@*#*####*==-==++==-=:=-:------::.......] 73..137 cells
+[S]   state      evolving
+[S]   previous   seed #4 settled at gen 667, period 2, 44 cells
+[S]   grid A *   buf0 VA 0xffffffc050000000 -> PA 0x1010000000
+[S]   grid B     buf1 VA 0xffffffc0b0000000 -> PA 0x1070000000
+[S]   history    buf2 VA 0xffffffc0fff00000 -> PA 0x10bff00000
+[S]   check      row 0 col 16: S-mode VA reads 0x0000000000000001,
+[S]              M-mode PA 0x1010000010 reads 0x0000000000000001: match
+```
+
+The whole block is printed under the console mutex, so other tasks' lines
+never land inside it. That is the only time `spin` can block.
 
 ## Debugging notes
 
