@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: MIT
  *
  * Three 1 GiB buffers in the 38-bit cached DDR window, mapped by the Sv39 MMU
- * (linker section .ddr_cached_38bit, see mpfs-lim-sv39.ld). Only usable in
+ * (symbols g_ddr_buffer_0..2 defined in mpfs-lim-sv39.ld). Only usable in
  * S-mode after the MMU is on.
  *
  * Access the buffers through g_ddr_buffer[], not by their symbol names.
@@ -12,7 +12,7 @@
  * it; the third is out of range and naming it in code fails to link with
  * "relocation truncated to fit: R_RISCV_PCREL_HI20". The pointer table holds
  * full 64-bit addresses (filled by the linker), so it works for all three.
- * The symbols are left global so they show up in the map file and debugger.
+ * The symbols are global so they show up in the map file and debugger.
  */
 
 #ifndef DDR_BUFFERS_H_
@@ -21,7 +21,7 @@
 #include <stdint.h>
 
 #define DDR_BUFFER_COUNT    (3U)
-#define DDR_BUFFER_SIZE     (1UL << 30)     /* 1 GiB each */
+#define DDR_BUFFER_SIZE     (1UL << 30)     /* 1 GiB each, = DDR_BUFFER_SIZE in the .ld */
 
 /* Virtual addresses of the buffers (defined in ddr_buffers.c). */
 extern char * const g_ddr_buffer[DDR_BUFFER_COUNT];

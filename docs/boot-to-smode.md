@@ -315,7 +315,7 @@ flowchart LR
         direction TB
         V0["0x00000000_00000000 + 1 GiB<br/>root[0]"]
         V1["0xFFFFFFC0_00000000 + 1 GiB<br/>root[256]<br/>code / data at 0xFFFFFFC0_08000000"]
-        V2["0xFFFFFFC0_40000000 + 3 GiB<br/>root[257..259]<br/>.ddr_cached_38bit buffers"]
+        V2["0xFFFFFFC0_40000000 + 3 GiB<br/>root[257..259]<br/>g_ddr_buffer_0..2"]
     end
     subgraph PA ["Physical"]
         direction TB
@@ -489,7 +489,7 @@ Other trap paths after the handover:
 | `g_sv39_root` | `.bss`, 4 KiB, page aligned | Sv39 root page table; `satp.PPN` is its physical address |
 | `xISRStack` | `.bss`, 512 words | S-mode trap stack (`configISR_STACK_SIZE_WORDS`) |
 | `g_m_shim_stack` | `.bss`, 4 KiB | M-mode stack for traps after the handover (via `mscratch`, physical) |
-| `.ddr_cached_38bit` | `0xFFFFFFC0_40000000` → `0x10_00000000`, 3 GiB | DDR buffers, `NOBITS` (nothing loaded) |
+| `g_ddr_buffer_0..2` | `0xFFFFFFC0_40000000` → `0x10_00000000`, 3 x 1 GiB | DDR buffers: linker symbols, no section and no load segment (nothing loaded or cleared) |
 | CLINT `mtime` | `0x0200BFF8` (identity) | read directly by S-mode (no `time` CSR on the U54) |
 | CLINT `mtimecmp[1]` | `0x02004008` | written only by the M-mode shim |
 
@@ -508,7 +508,7 @@ Other trap paths after the handover:
   never touch `satp`.
 * **Loading the image.** The ELF entry point is virtual
   (`0xFFFFFFC0_08000000`); the SoftConsole launcher loads it with gdb and
-  sets every hart's `pc` to the physical `0x08000000`. Renode 1.13's
-  `sysbus LoadELF` cannot handle the 3 GiB `NOBITS` DDR segment, so a
-  monitor-only flow has to load the contentful sections with `LoadBinary`
-  at their physical addresses instead.
+  sets every hart's `pc` to the physical `0x08000000`. A monitor-only flow
+  can use `sysbus LoadELF` (it loads at the physical addresses) followed by
+  `sysbus.<hart> PC 0x08000000` for each hart. The DDR buffers are linker
+  symbols, not a section, so there is no 3 GiB segment to load.

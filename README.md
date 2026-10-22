@@ -236,7 +236,8 @@ and G set. `ORIGIN(ddr_cached_38bit_va) - ORIGIN(l2lim_va)` = 896 MiB.
 `src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld` (used by
 LIM-Debug and LIM-Release) has a physical and a virtual region for L2LIM and
 for the DDR window. Every section is `> xxx_va AT> xxx_pa`. The DDR buffers
-are their own NOLOAD output section, `.ddr_cached_38bit`. ASSERTs check the
+are not a section at all: `g_ddr_buffer_0..2` are absolute symbols at
+`ORIGIN(ddr_cached_38bit_va)` + 0, 1 and 2 GiB (see below). ASSERTs check the
 gigapage alignment, the "DDR within 1 GiB of L2LIM" rule, and that every
 loaded section has `VMA - LMA == ONCHIP_VA_OFFSET`.
 
@@ -266,10 +267,15 @@ Still true and worth knowing:
 
 ### DDR buffers
 
-`src/application/ddr/ddr_buffers.c` defines `g_ddr_buffer_0..2`, each
-`char[1 GiB]`, in input sections `.bss.ddr_cached_38bit.N`. The `.bss.`
-prefix makes compilers emit NOBITS; with any other name GCC writes 1 GiB of
-zeros per buffer into the object file.
+The linker script defines `g_ddr_buffer_0..2` as absolute symbols, 1 GiB
+apart from `ORIGIN(ddr_cached_38bit_va)`, and `src/application/ddr/ddr_buffers.c`
+declares them `extern char[]`. They are deliberately **not** an output
+section: even a `NOLOAD` section is still *allocated*, so the linker gives it
+a `PT_LOAD` program header with `MemSiz` = 3 GiB. `size` then reports 3 GiB of
+bss, loaders that clear BSS segments would try to zero it, and Renode 1.13's
+`sysbus LoadELF` crashes on it. (Marking the section `(COPY)` instead makes
+ld 2.32 write 3 GiB of zeros into the ELF.) As symbols they cost nothing:
+the ELF has only the on-chip segments and `size` shows the real footprint.
 
 **Access them through `g_ddr_buffer[n]`, not by name.** With medany, a
 symbol named in code must be within ±2 GiB of the instruction. The buffers
@@ -279,7 +285,7 @@ R_RISCV_PCREL_HI20`). The table holds full 64-bit addresses. (The "DDR
 within 1 GiB of L2LIM" rule bounds where the region *starts*; with 3
 contiguous 1 GiB buffers, the last one always starts beyond 2 GiB.)
 
-The section is not loaded or cleared: contents are undefined after reset.
+Nothing loads or clears the buffers: contents are undefined after reset.
 
 ### Renode
 

@@ -11,7 +11,7 @@
  *
  *   virtual (run, S-mode)                    physical (load)
  *   0xFFFFFFC0_00000000 .. +1 GiB  -------->  0x00_00000000  on-chip gigapage 0
- *     0xFFFFFFC0_08000000  l2lim_va  ------>    0x00_08000000  l2lim_pa
+ *   0xFFFFFFC0_08000000  l2lim_va  -------->  0x00_08000000  l2lim_pa
  *   0xFFFFFFC0_40000000 .. +3 GiB  -------->  0x10_00000000  ddr_cached_38bit_pa
  *   0x00000000_00000000 .. +1 GiB  -------->  0x00_00000000  identity: peripherals
  *                                                            and MMU switch-over
@@ -92,6 +92,19 @@ SECTIONS
     __ddr_cached_38bit_va_start = ORIGIN(ddr_cached_38bit_va);
     __ddr_cached_38bit_pa_start = ORIGIN(ddr_cached_38bit_pa);
     __ddr_cached_38bit_size     = LENGTH(ddr_cached_38bit_va);
+
+    /* 38-bit cached DDR buffers (ddr/ddr_buffers.c): three 1 GiB buffers at
+     * fixed virtual addresses in the DDR window. They are plain symbols, not
+     * an output section. Even a NOLOAD section is allocated: it gets a
+     * PT_LOAD program header with a 3 GiB MemSiz, 'size' reports it as bss,
+     * and Renode 1.13's LoadELF cannot handle it. There is nothing to load
+     * or clear here anyway; contents are undefined after reset. */
+    DDR_BUFFER_SIZE = 0x40000000;
+    g_ddr_buffer_0  = ORIGIN(ddr_cached_38bit_va) + 0 * DDR_BUFFER_SIZE;
+    g_ddr_buffer_1  = ORIGIN(ddr_cached_38bit_va) + 1 * DDR_BUFFER_SIZE;
+    g_ddr_buffer_2  = ORIGIN(ddr_cached_38bit_va) + 2 * DDR_BUFFER_SIZE;
+    ASSERT(3 * DDR_BUFFER_SIZE <= LENGTH(ddr_cached_38bit_va),
+           "DDR buffers do not fit in ddr_cached_38bit_va")
 
     /* ===================== loaded sections ============================== */
 
@@ -184,17 +197,6 @@ SECTIONS
         __l2_scratchpad_vma_end = .;
     } > scratchpad_va
 
-    /* 38-bit cached DDR buffers. Input sections .bss.ddr_cached_38bit.<n>
-     * (the .bss. prefix makes compilers emit NOBITS), in name order. Must
-     * come before .sbss/.bss, whose .bss.* pattern would claim them. Never
-     * loaded or cleared: contents are undefined after reset. */
-    .ddr_cached_38bit (NOLOAD) :
-    {
-        __ddr_cached_38bit_start = .;
-        KEEP (*(SORT_BY_NAME(.bss.ddr_cached_38bit.*)))
-        __ddr_cached_38bit_end = .;
-    } > ddr_cached_38bit_va AT> ddr_cached_38bit_pa
-
     /* Zero-initialised data, cleared by the HAL's init_memory(). */
     .sbss (NOLOAD) : ALIGN(0x10)
     {
@@ -279,8 +281,4 @@ SECTIONS
     ASSERT(ADDR(.text)  - LOADADDR(.text)  == ONCHIP_VA_OFFSET, ".text: VMA - LMA != ONCHIP_VA_OFFSET")
     ASSERT(ADDR(.sdata) - LOADADDR(.sdata) == ONCHIP_VA_OFFSET, ".sdata: VMA - LMA != ONCHIP_VA_OFFSET")
     ASSERT(ADDR(.data)  - LOADADDR(.data)  == ONCHIP_VA_OFFSET, ".data: VMA - LMA != ONCHIP_VA_OFFSET")
-    ASSERT(ADDR(.ddr_cached_38bit) == ORIGIN(ddr_cached_38bit_va),
-           ".ddr_cached_38bit must start at ORIGIN(ddr_cached_38bit_va)")
-    ASSERT(LOADADDR(.ddr_cached_38bit) == ORIGIN(ddr_cached_38bit_pa),
-           ".ddr_cached_38bit must load at ORIGIN(ddr_cached_38bit_pa)")
 }
