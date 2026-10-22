@@ -1,12 +1,19 @@
-# Boot flow: reset → MMU/PMP configuration → S-mode handover
+# Boot flow: reset → PMP configuration → S-mode handover → Sv39 MMU
 
 This document follows U54_1 from reset to the first FreeRTOS task running in
-supervisor mode, and shows what M-mode keeps doing afterwards. The diagrams
-are [Mermaid](https://mermaid.js.org/), which GitHub renders inline.
+supervisor mode with the Sv39 MMU on, and shows what M-mode keeps doing
+afterwards. The diagrams are [Mermaid](https://mermaid.js.org/), which GitHub
+renders inline.
 
-Applies to the **LIM-Debug** configuration (`IMAGE_LOADED_BY_BOOTLOADER = 0`,
-`MPFS_HAL_HW_CONFIG` defined, `DDR_SUPPORT` off, image linked into L2LIM by
-`mpfs-lim.ld`).
+Applies to branch **`mmu-sv39`**, **LIM-Debug** configuration
+(`IMAGE_LOADED_BY_BOOTLOADER = 0`, `MPFS_HAL_HW_CONFIG` defined, `DDR_SUPPORT`
+off). The image is linked by
+`src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld`: every
+section is **linked at its virtual address** in the upper half of the Sv39
+address space (`0xFFFFFFC0_08000000`) and **loaded at its physical address**
+in L2LIM (`0x08000000`). M-mode runs the physical copy with the MMU off;
+S-mode turns the MMU on in `smode_start` and continues at the virtual alias
+([section 6](#6-sv39-bring-up-smode_starts-sv39c)).
 
 | Stage | Privilege | Hart(s) | Code |
 |---|---|---|---|
@@ -15,9 +22,10 @@ Applies to the **LIM-Debug** configuration (`IMAGE_LOADED_BY_BOOTLOADER = 0`,
 | 3. Per-hart dispatch | M | all | `main_other_hart()` in `system_startup.c` |
 | 4. Release U54_1, park | M | E51, U54_2..4 | `src/application/hart0/e51.c`, `hart2..4/u54_N.c`, `inc/hart_park.h` |
 | 5. Peripheral + PLIC S-context set-up | M | U54_1 | `src/application/hart1/u54_1.c` |
-| 6. Delegation, PMP, `satp`, `mret` | M → S | U54_1 | `m_shim_enter_smode()` in `src/application/smode/m_shim.c` |
-| 7. FreeRTOS start | S | U54_1 | `s_mode_main()` in `src/application/hart1/app_main.c`, `portable/GCC/RISC-V-SMode/` |
-| 8. Runtime traps into M-mode | M | U54_1 | `src/application/smode/m_shim_trap.S`, `m_shim.c` |
+| 6. Delegation, PMP, `satp = 0`, `mret` | M → S | U54_1 | `m_shim_enter_smode()` in `src/application/smode/m_shim.c` |
+| 7. Sv39 page tables, `satp` on, jump to the virtual alias | S (MMU off → on) | U54_1 | `smode_start` in `src/application/smode/smode_start.S`, `sv39_build()` in `smode/sv39.c` |
+| 8. FreeRTOS start | S (virtual) | U54_1 | `s_mode_main()` in `src/application/hart1/app_main.c`, `portable/GCC/RISC-V-SMode/` |
+| 9. Runtime traps into M-mode | M (physical) | U54_1 | `src/application/smode/m_shim_trap.S`, `m_shim.c` |
 
 ## 1. Overview
 
@@ -42,19 +50,24 @@ flowchart TD
     U541 --> PLAT["m_mode_platform_init()<br/>clocks, MMUART1, GPIO2"]
     PLAT --> PLIC["m_mode_plic_init_for_smode()<br/>sources 43/44/118 → S-context"]
     PLIC --> SHIM["m_shim_enter_smode()<br/>mtvec, mideleg/medeleg, PMP, satp=0"]
-    SHIM -->|"mret, MPP=S"| SMAIN["s_mode_main()<br/>S-mode, stvec = FreeRTOS handler"]
+    SHIM -->|"mret, MPP=S<br/>physical PC"| SSTART["smode_start<br/>S-mode, MMU off<br/>stvec = smode_early_trap"]
+    SSTART --> SV39["sv39_build()<br/>gigapage root table"]
+    SV39 -->|"satp = Sv39<br/>sp, pc, gp += VA - PA"| SMAIN["s_mode_main()<br/>virtual PC 0xFFFFFFC0_08..<br/>stvec = FreeRTOS handler"]
     SMAIN --> SCHED["vTaskStartScheduler()"]
-    SCHED --> TASKS(["FreeRTOS tasks in S-mode<br/>console, blink, spin, heartbeat"])
+    SCHED --> TASKS(["FreeRTOS tasks in S-mode, MMU on<br/>console, blink, spin, heartbeat"])
 
     classDef m fill:#fde2e2,stroke:#b33,color:#000
+    classDef sp fill:#fff4d6,stroke:#a70,color:#000
     classDef s fill:#e2f0fd,stroke:#336,color:#000
     classDef park fill:#eee,stroke:#888,color:#555
     class ENTRY,MFH,WFI1,MOH,MOH0,E51,U541,U54N,PLAT,PLIC,SHIM m
+    class SSTART,SV39 sp
     class SMAIN,SCHED,TASKS s
     class PARK0,PARK2 park
 ```
 
-Red = M-mode, blue = S-mode, grey = parked.
+Red = M-mode (physical addresses), yellow = S-mode with the MMU still off,
+blue = S-mode with Sv39 on (virtual addresses), grey = parked.
 
 ## 2. Reset entry (`mss_entry.S`)
 
@@ -139,7 +152,10 @@ U54_1's own `clear_soft_interrupt()`.
 ## 4. U54_1 M-mode set-up (`u54_1.c`)
 
 Everything that needs `mhartid` or the M-mode PLIC context is done here,
-because S-mode cannot read `mhartid` and the HAL helpers use it.
+because S-mode cannot read `mhartid` and the HAL helpers use it. All of it runs
+from the physical copy of L2LIM, so addresses taken here (`smode_start`,
+`g_s_boot_stack`) are physical, which is what `mret` and the first S-mode
+instructions need.
 
 ```mermaid
 flowchart TD
@@ -163,13 +179,16 @@ flowchart TD
     end
 
     Q4 --> R["print [M] delegating ... entering S-mode"]
-    R --> S(["m_shim_enter_smode(s_mode_main,<br/>&g_s_boot_stack[4096])"])
+    R --> S(["m_shim_enter_smode(smode_start,<br/>&g_s_boot_stack[4096])<br/>both physical"])
 ```
 
 ## 5. The handover: `m_shim_enter_smode()`
 
-This is where the MMU and memory protection for S-mode are configured, the
-trap routing is set up, and the hart changes privilege.
+This is where memory protection for S-mode is configured, the trap routing is
+set up, and the hart changes privilege. The MMU is deliberately left **off**
+(`satp = 0`): the shim does not know the image's virtual layout, and the
+S-mode entry code builds its own page tables
+([section 6](#6-sv39-bring-up-smode_starts-sv39c)).
 
 ```mermaid
 flowchart TD
@@ -192,7 +211,7 @@ flowchart TD
 
     D3 --> E
     subgraph MEM ["4 · Memory protection and translation"]
-        E["pmpaddr0 = ~0<br/>pmpcfg0 = 0x1F (NAPOT, R W X)<br/>entry 0 already locked by init_pmp(1): write ignored"] --> F["satp = 0 (MODE = Bare, no paging)"]
+        E["pmpaddr0 = ~0<br/>pmpcfg0 = 0x1F (NAPOT, R W X)<br/>entry 0 already locked by init_pmp(1): write ignored"] --> F["satp = 0 (MODE = Bare)<br/>MMU off until smode_start"]
         F --> G["sfence.vma"]
     end
 
@@ -203,20 +222,21 @@ flowchart TD
 
     H --> I
     subgraph RET ["6 · Build the mret"]
-        I["mstatus: clear MPP, MPIE, SIE, SPIE, SPP,<br/>MPRV, SUM, TVM, TW, TSR<br/>set MPP = S (01); FS unchanged"] --> J["mepc = entry (s_mode_main)"]
-        J --> K["sp = s_stack_top<br/>fence.i"]
+        I["mstatus: clear MPP, MPIE, SIE, SPIE, SPP,<br/>MPRV, SUM, TVM, TW, TSR<br/>set MPP = S (01); FS unchanged"] --> J["mepc = entry (smode_start, physical)"]
+        J --> K["sp = s_stack_top (physical)<br/>fence.i"]
     end
 
-    K --> L(["mret → S-mode at s_mode_main<br/>SIE = 0, sp = g_s_boot_stack top"])
+    K --> L(["mret → S-mode at smode_start<br/>MMU off, SIE = 0, sp = g_s_boot_stack top"])
 ```
 
 ### Memory configuration at the moment of `mret`
 
-**Address translation (MMU).** `satp = 0` selects `MODE = Bare`: S-mode
-virtual addresses are physical addresses and no page tables exist. The
-`sfence.vma` discards any stale TLB entries. Because there is no paging, the
-page-fault causes delegated in `medeleg` (12, 13, 15) can only come from
-software that later turns paging on.
+**Address translation (MMU).** `satp = 0` selects `MODE = Bare`: until
+`smode_start` turns Sv39 on, S-mode addresses are physical addresses. The
+`sfence.vma` discards any stale TLB entries. Once Sv39 is on, an unmapped or
+wrongly-permissioned access raises a page fault (12, 13, 15); those are in
+`medeleg`, so they go to S-mode's `stvec` — `smode_early_trap` during the
+switch, the FreeRTOS handler afterwards.
 
 **PMP.** S-mode and U-mode accesses must match a PMP entry, otherwise they
 fault (M-mode is unaffected by unlocked entries). The shim asks for one NAPOT
@@ -244,15 +264,19 @@ flowchart LR
     C --> D["effective entry 0:<br/>NAPOT, all memory, RWX, L=1<br/>(shim write ignored for entry 0)"]
 ```
 
+Every S-mode access goes through both checks, translation first:
+
 ```mermaid
 flowchart LR
     subgraph S ["S-mode access, VA"]
         VA["load / store / fetch"]
     end
-    VA -->|"satp.MODE = Bare<br/>VA = PA"| PA["Physical address"]
+    VA -->|"before smode_start's satp write:<br/>Bare, VA = PA"| PA["Physical address"]
+    VA -->|"after: Sv39 walk of g_sv39_root<br/>(section 6)"| PA
+    VA -.->|"no valid PTE / wrong R W X"| PF["page fault → medeleg → stvec"]
     PA --> PMP{"PMP entry 0<br/>NAPOT, all of memory<br/>R W X"}
-    PMP -->|"match, allowed"| BUS["AXI / L2LIM / peripherals"]
-    PMP -.->|"no match (not possible with this config)"| AF["access fault → medeleg → S-mode handler"]
+    PMP -->|"match, allowed"| BUS["AXI / L2LIM / DDR / peripherals"]
+    PMP -.->|"no match (not possible with this config)"| AF["access fault → medeleg → stvec"]
 ```
 
 **CSR state after `mret`:**
@@ -260,50 +284,166 @@ flowchart LR
 | CSR | Value | Why |
 |---|---|---|
 | privilege | S | `mstatus.MPP = 01` |
-| `pc` | `s_mode_main` | `mepc` |
-| `sp` | `&g_s_boot_stack[4096]` | set right before `mret` |
+| `pc` | `smode_start`, **physical** (`0x0800....`) | `mepc`; `u54_1()` took the address while running physical |
+| `sp` | `&g_s_boot_stack[4096]`, physical | set right before `mret` |
+| `gp` | physical alias of `__global_pointer$` | set by the HAL in M-mode; moved by `smode_start` |
 | `sstatus.SIE` / `SPIE` / `SPP` | 0 / 0 / 0 | interrupts off until the scheduler starts |
 | `sstatus.FS` | on (from `mss_entry.S`) | FPU context saved by the port |
-| `satp` | 0 | Bare, no MMU |
+| `satp` | 0 | Bare; Sv39 is turned on by `smode_start` |
 | `pmpcfg0` / `pmpaddr0` | `0x9F` / `~0` (shim writes `0x1F`, see note above) | whole space RWX for S/U, entry locked by the HAL |
 | `mideleg` | `0x222` | SSIP, STIP, SEIP go straight to S-mode |
 | `medeleg` | `0xB1F7` | faults, illegal instr, U-ecall go to S-mode; breakpoint (3) and S-ecall (9) stay in M |
 | `mie` | 0 | only `MTIE` is ever set later, by SBI `set_timer` |
 | `mtvec` / `mscratch` | `m_shim_trap_vector` / M stack top | M-mode traps never use the S-mode stack |
 | `sie`, `sscratch` | 0 | set by the port / unused |
-| `stvec` | not yet set | written first thing in `s_mode_main()` |
+| `stvec` | not yet set | `smode_early_trap` is written first thing in `smode_start` |
 
-## 6. Privilege levels on U54_1
+## 6. Sv39 bring-up (`smode_start.S`, `sv39.c`)
+
+`smode_start` is the S-mode entry point. It starts with the MMU off, running
+the physical copy, and ends by calling `s_mode_main()` at the virtual alias.
+
+### Address map
+
+`sv39_build()` uses **gigapages only** (1 GiB leaf PTEs in the root table, no
+second-level tables). The layout comes from the linker script
+(`__l2lim_start`, `__l2lim_pa_start`, `__ddr_cached_38bit_*`):
+
+```mermaid
+flowchart LR
+    subgraph VA ["Virtual (S-mode, satp = Sv39)"]
+        direction TB
+        V0["0x00000000_00000000 + 1 GiB<br/>root[0]"]
+        V1["0xFFFFFFC0_00000000 + 1 GiB<br/>root[256]<br/>code / data at 0xFFFFFFC0_08000000"]
+        V2["0xFFFFFFC0_40000000 + 3 GiB<br/>root[257..259]<br/>.ddr_cached_38bit buffers"]
+    end
+    subgraph PA ["Physical"]
+        direction TB
+        P0["0x00_00000000 + 1 GiB<br/>on-chip gigapage 0:<br/>CLINT, PLIC, MMUART, GPIO,<br/>L2LIM 0x08000000"]
+        P2["0x10_00000000 + 3 GiB<br/>38-bit cached DDR"]
+    end
+    V0 -->|"identity, RWX"| P0
+    V1 -->|"high alias, RWX<br/>VA - PA = 0xFFFFFFC0_00000000"| P0
+    V2 -->|"RW, no X"| P2
+```
+
+| Root index | VA | PA | Perms | Why |
+|---|---|---|---|---|
+| 0 | `0x0` | `0x0` | RWX | identity map: the HAL drivers use physical peripheral addresses, and the instructions right after the `satp` write still execute from the physical copy |
+| 256 | `0xFFFFFFC0_00000000` | `0x0` | RWX | high alias of on-chip gigapage 0: where the kernel's code and data run |
+| 257–259 | `0xFFFFFFC0_40000000` | `0x10_00000000` | RW | 3 GiB of DDR buffers (`ddr/ddr_buffers.c`), data only |
+
+All leaves have `V | G | A | D` set (A/D pre-set so the hardware never needs
+to update them, which some implementations do by raising a page fault). No
+`U` bit: nothing is accessible from U-mode.
+
+### Switch-over sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SS as smode_start (S)
+    participant B as sv39_build() (S, MMU off)
+    participant MMU as satp / TLB
+
+    Note over SS: pc, sp, gp physical, satp = 0, SIE = 0
+    SS->>SS: stvec = smode_early_trap (physical)
+    SS->>B: call
+    B->>B: read layout table (absolute 64-bit relocs)
+    B->>B: zero g_sv39_root[512], fill entries 0, 256, 257..259
+    B->>MMU: sfence.vma (table stores visible to the walker)
+    B-->>SS: a0 = satp = 8<<60 | PPN(&g_sv39_root)<br/>a1 = VA - PA = 0xFFFFFFC0_00000000
+    SS->>MMU: csrw satp, a0, then sfence.vma
+    Note over SS,MMU: Sv39 on. Next fetch is still at the physical PC,<br/>which root[0] (identity) maps.
+    SS->>SS: sp += a1
+    SS->>SS: jr (label + a1): pc now virtual
+    SS->>SS: la gp, __global_pointer$ (pc-relative, so virtual)
+    SS->>SS: stvec = smode_early_trap (virtual)
+    SS->>SS: call s_mode_main
+    Note over SS: s_mode_main sets stvec = freertos_risc_v_trap_handler
+```
+
+On Renode the console then shows, for example,
+`satp=0x800000000000801a` (root table at PA `0x0801A000`) and
+`running at 0xffffffc008000eb0 (s_mode_main)`.
+
+### One image, two address views
+
+M-mode (HAL start-up, `u54_1()`, the shim) and `smode_start` before the
+switch run the **same code** as S-mode, but from its physical copy:
+
+```mermaid
+flowchart LR
+    subgraph L ["Link time (mpfs-lim-sv39.ld)"]
+        LV["sections linked at VA<br/>0xFFFFFFC0_08000000"]
+        LP["loaded at PA (AT>)<br/>0x08000000"]
+        LV -.->|"VMA - LMA = ONCHIP_VA_OFFSET<br/>(ASSERTed, gigapage multiple)"| LP
+    end
+    subgraph R ["Run time"]
+        RM["M-mode, smode_start pre-switch:<br/>pc physical, MMU off"]
+        RS["S-mode after switch:<br/>pc virtual, Sv39 on"]
+    end
+    LP --> RM
+    LV --> RS
+    RM -->|"-mcmodel=medany: PC-relative<br/>distances identical in both views"| RS
+```
+
+Consequences:
+
+* **PC-relative addressing works in both views** because the whole on-chip
+  gigapage is aliased with a single offset. `la sym` gives a physical
+  address when run physical, a virtual one when run virtual.
+* **Absolute pointers in data** (function-pointer tables such as the HAL's
+  `ext_irq_handler_table`, linker-filled tables) hold **virtual** addresses
+  and are only valid in S-mode with the MMU on.
+* **`sv39_build()` reads the layout from a `volatile` table** of absolute
+  relocations, because referencing absolute linker symbols PC-relatively
+  from the physical copy would give the wrong value.
+* **`gp`**: S-mode moves `gp` to the virtual alias. The M-mode trap vector
+  (`m_shim_trap.S`) saves the interrupted `gp`, loads its own (physical) one
+  with `la gp, __global_pointer$`, and restores S-mode's `gp` before `mret`.
+* **SBI arguments are scalars** (timer value, hart mask), so M-mode never has
+  to translate an S-mode virtual address. The debug call
+  `SBI_SHIM_READ_PHYS_U64` takes a physical address and only accepts the DDR
+  window.
+* **Faults during the switch** go to `smode_early_trap`, which is position
+  independent and reports `scause`/`sepc`/`stval` on UART1 through
+  `smode_early_trap_report()` (`smode_irq.c`), then parks.
+
+## 7. Privilege levels on U54_1
 
 ```mermaid
 stateDiagram-v2
     direction LR
     [*] --> M_boot: reset
-    M_boot: M-mode boot<br/>mss_entry.S → u54_1()
-    M_boot --> S_kernel: mret in m_shim_enter_smode()
-    S_kernel: S-mode<br/>s_mode_main() / FreeRTOS
+    M_boot: M-mode boot (physical)<br/>mss_entry.S → u54_1()
+    M_boot --> S_early: mret in m_shim_enter_smode()
+    S_early: S-mode, MMU off<br/>smode_start / sv39_build()
+    S_early --> S_kernel: satp = Sv39, jump to VA
+    S_early --> Parked: fault → smode_early_trap
+    S_kernel: S-mode, Sv39 on (virtual)<br/>s_mode_main() / FreeRTOS
     S_kernel --> M_shim: ecall (SBI set_timer, send_ipi)<br/>machine timer IRQ<br/>undelegated exception
-    M_shim: M-mode shim<br/>m_shim_trap_vector
+    M_shim: M-mode shim (physical)<br/>m_shim_trap_vector, own gp
     M_shim --> S_kernel: mret (SBI done / STIP raised)
     M_shim --> Parked: unhandled trap<br/>m_shim_fatal()
-    S_kernel --> S_kernel: delegated trap via stvec<br/>SSIP yield, STIP tick, SEIP PLIC,<br/>faults → freertos_risc_v_trap_handler, sret
-    Parked: parked<br/>g_m_shim_fault, WFI forever
+    S_kernel --> S_kernel: delegated trap via stvec<br/>SSIP yield, STIP tick, SEIP PLIC,<br/>page faults → freertos_risc_v_trap_handler, sret
+    Parked: parked<br/>g_m_shim_fault / g_smode_fault, WFI forever
 ```
 
-## 7. S-mode start-up and the first tick
+## 8. S-mode start-up and the first tick
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant S as s_mode_main / FreeRTOS (S)
-    participant M as M-mode shim (M)
+    participant S as s_mode_main / FreeRTOS (S, Sv39)
+    participant M as M-mode shim (M, physical)
     participant CLINT as CLINT mtime / mtimecmp[1]
 
-    Note over S: entered by mret, SIE = 0
-    S->>S: stvec = freertos_risc_v_trap_handler
+    Note over S: entered from smode_start at the virtual alias, SIE = 0
+    S->>S: stvec = freertos_risc_v_trap_handler (virtual)
     S->>S: create queue, mutex, 4 tasks
     S->>S: vTaskStartScheduler → xPortStartScheduler
-    S->>CLINT: read mtime (0x0200BFF8, PMP allows it)
+    S->>CLINT: read mtime (0x0200BFF8 via identity gigapage, PMP allows it)
     S->>M: ecall a7 = TIME, a6 = set_timer, a0 = mtime + 1000
     M->>CLINT: mtimecmp[1] = a0
     M->>M: clear mip.STIP, set mie.MTIE
@@ -334,31 +474,41 @@ Other trap paths after the handover:
 * **PLIC** – sources 43/44/118 assert SEIP on hart 1's S-context; delegated,
   `smode_irq.c` claims/completes on the S-context and calls the HAL handler
   table entries.
-* **Exceptions** – delegated faults go to
+* **Exceptions** – delegated faults, including page faults, go to
   `freertos_risc_v_application_exception_handler` (`smode_irq.c`), which
-  records `g_smode_fault`. Breakpoints stay in M-mode for the debugger.
+  records `g_smode_fault`. Before FreeRTOS installs its handler they go to
+  `smode_early_trap`. Breakpoints stay in M-mode for the debugger.
 
-## 8. Memory used during the handover
+## 9. Memory used during the handover
 
-| Region | Address | Used for |
+| Region | Address (VA → PA) | Used for |
 |---|---|---|
-| L2LIM | `0x08000000`, 256 KiB | code, data, bss, FreeRTOS heap (`mpfs-lim.ld`) |
-| `__app_stack_top_h1` | L2LIM | U54_1 M-mode stack until `mret` |
-| `g_s_boot_stack` | `.bss`, 4 KiB | S-mode stack for `s_mode_main()` until the scheduler starts; unused afterwards |
+| L2LIM | `0xFFFFFFC0_08000000` → `0x08000000`, 255 KiB | code, data, bss, FreeRTOS heap (`mpfs-lim-sv39.ld`) |
+| `__app_stack_top_h1` | L2LIM | U54_1 M-mode stack until `mret` (used physical) |
+| `g_s_boot_stack` | `.bss`, 4 KiB | S-mode stack for `smode_start` / `s_mode_main()` until the scheduler starts (physical, then virtual after `sp += a1`); unused afterwards |
+| `g_sv39_root` | `.bss`, 4 KiB, page aligned | Sv39 root page table; `satp.PPN` is its physical address |
 | `xISRStack` | `.bss`, 512 words | S-mode trap stack (`configISR_STACK_SIZE_WORDS`) |
-| `g_m_shim_stack` | `.bss`, 4 KiB | M-mode stack for traps after the handover (via `mscratch`) |
-| CLINT `mtime` | `0x0200BFF8` | read directly by S-mode (no `time` CSR on the U54) |
+| `g_m_shim_stack` | `.bss`, 4 KiB | M-mode stack for traps after the handover (via `mscratch`, physical) |
+| `.ddr_cached_38bit` | `0xFFFFFFC0_40000000` → `0x10_00000000`, 3 GiB | DDR buffers, `NOBITS` (nothing loaded) |
+| CLINT `mtime` | `0x0200BFF8` (identity) | read directly by S-mode (no `time` CSR on the U54) |
 | CLINT `mtimecmp[1]` | `0x02004008` | written only by the M-mode shim |
 
-## Turning on the MMU later
+## Notes on running with the MMU on
 
-The port does not depend on `satp`. To run with Sv39 paging:
-
-1. Build page tables in S-mode (identity-map L2LIM, the peripherals and the
-   CLINT `mtime` page at minimum).
-2. Write `satp = (8 << 60) | (asid << 44) | (root_pa >> 12)` and `sfence.vma`
-   from S-mode, after `stvec` is set so a bad mapping traps cleanly.
-3. The M-mode shim needs no mapping: M-mode always uses physical
-   addresses (`MPRV = 0`), so `m_shim_trap_vector` and its stack keep working.
-4. Tighten PMP at the same time (after unlocking entry 0, see section 5):
-   paging protects S-mode from U-mode, PMP is what protects M-mode from S-mode.
+* **PMP is still wide open.** Paging protects S-mode from U-mode; PMP is what
+  protects M-mode from S-mode. With paging on, S-mode can still map any
+  physical address it likes, so tighten PMP (after unlocking entry 0, see
+  [section 5](#memory-configuration-at-the-moment-of-mret)) before relying on
+  it for isolation.
+* **The identity gigapage is RWX** so the HAL drivers keep working with
+  physical register addresses. Removing it means remapping the peripherals
+  and changing the drivers' base addresses.
+* **One ASID, global mappings.** `satp.ASID = 0` and every PTE has `G` set:
+  there is a single address space, so tasks share it and context switches
+  never touch `satp`.
+* **Loading the image.** The ELF entry point is virtual
+  (`0xFFFFFFC0_08000000`); the SoftConsole launcher loads it with gdb and
+  sets every hart's `pc` to the physical `0x08000000`. Renode 1.13's
+  `sysbus LoadELF` cannot handle the 3 GiB `NOBITS` DDR segment, so a
+  monitor-only flow has to load the contentful sections with `LoadBinary`
+  at their physical addresses instead.
