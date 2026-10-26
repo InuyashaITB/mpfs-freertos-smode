@@ -19,6 +19,18 @@
 #                    SoftConsole's build_tools has busybox.exe but no cp.exe
 #                    (make runs simple recipe lines without a shell there)
 
+# GNU make on Windows runs recipes with sh.exe when it finds one on PATH and
+# falls back to cmd.exe otherwise, which cannot run these recipes ('mkdir -p',
+# quoting). cmd's echo keeps the quotes, sh's does not.
+ifeq ($(OS),Windows_NT)
+  ifneq ($(shell echo "sh"),sh)
+    $(error No sh.exe on PATH, so make would run recipes with cmd.exe. Add \
+      SoftConsole's build_tools\bin to the front of PATH (e.g. in PowerShell: \
+      $$env:PATH = "C:\Microchip\SoftConsole-v2022.2-RISC-V-747\build_tools\bin;$$env:PATH") \
+      and use the make.exe there)
+  endif
+endif
+
 CROSS_COMPILE   ?= riscv64-unknown-elf-
 BUILD_TYPE      ?= Debug
 LIBC_SPECS      ?= --specs=nano.specs

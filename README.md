@@ -105,6 +105,16 @@ make install PREFIX=dist    # copy the install tree to dist/ (any path, e.g. C:/
 make clean                  # remove build/
 ```
 
+**Command line on Windows:** SoftConsole puts its `build_tools\bin` at the
+front of PATH for its own builds; a shell does not. Without an `sh.exe` on
+PATH, GNU make runs recipes with `cmd.exe`, which cannot run them (the build
+now stops with a message saying so). In PowerShell:
+
+```powershell
+$env:PATH = "C:\Microchip\SoftConsole-v2022.2-RISC-V-747\build_tools\bin;C:\Microchip\SoftConsole-v2022.2-RISC-V-747\riscv-unknown-elf-gcc\bin;$env:PATH"
+make libs BUILD_TYPE=Release
+```
+
 Outputs:
 
 ```
