@@ -185,6 +185,9 @@ $(BUILD_CONFIG): FORCE
 	@echo "LIBC_SPECS ?= $(LIBC_SPECS)" >> $@
 	@echo "LIBC_LINK_SPECS ?= $(LIBC_LINK_SPECS)" >> $@
 	@echo "MARCH ?= $(MARCH)" >> $@
+	@echo "LOADED_BY_BOOTLOADER ?= $(LOADED_BY_BOOTLOADER)" >> $@
+	@echo "MPFS_HAL_FIRST_HART ?= $(MPFS_HAL_FIRST_HART)" >> $@
+	@echo "MPFS_HAL_LAST_HART ?= $(MPFS_HAL_LAST_HART)" >> $@
 
 # The same settings for CMake applications (MpfsSmodeConfig.cmake).
 BUILD_CONFIG_CMAKE := $(STAGE)/lib/cmake/MpfsSmode/build_config.cmake
@@ -196,6 +199,7 @@ $(BUILD_CONFIG_CMAKE): FORCE
 	@echo 'set(MPFS_SMODE_LIBC_SPECS "$(LIBC_SPECS)")' >> $@
 	@echo 'set(MPFS_SMODE_LIBC_LINK_SPECS "$(LIBC_LINK_SPECS)")' >> $@
 	@echo 'set(MPFS_SMODE_MARCH "$(MARCH)")' >> $@
+	@echo 'set(MPFS_SMODE_BOOT_DEFS "$(MPFS_BOOT_DEFS)")' >> $@
 
 stage: $(LIBS) $(STAGED) $(BUILD_CONFIG) $(BUILD_CONFIG_CMAKE)
 

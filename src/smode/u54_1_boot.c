@@ -6,10 +6,15 @@
  * U54_1 M-mode entry: the minimum the S-mode kernel needs, then handoff.
  *
  * Sequence:
- *   1. The HAL's main_first_hart() (E51) finishes the system start-up and
- *      only then releases harts 1..4 into main_other_hart(), which calls this
- *      u54_1(). No further handshake with the E51 is needed, so the library
- *      does not depend on what the E51 runs.
+ *   1. Standalone (IMAGE_LOADED_BY_BOOTLOADER = 0): the HAL's
+ *      main_first_hart() (E51) finishes the system start-up and only then
+ *      releases harts 1..4 into main_other_hart(), which calls this u54_1().
+ *      No further handshake with the E51 is needed, so the library does not
+ *      depend on what the E51 runs.
+ *      Loaded by a bootloader (= 1, e.g. HSS): the bootloader has done the
+ *      system start-up; the HAL's entry code sets up stacks, .data and .bss
+ *      and calls u54_1() on hart 1 (MPFS_HAL_FIRST_HART, by default also the
+ *      last hart).
  *   2. smode_m_prehook(): the application's M-mode bring-up (clocks, resets,
  *      peripherals, PLIC routing...). Weak, empty by default.
  *   3. PLIC supervisor context of this hart: every source disabled for both
@@ -28,6 +33,11 @@
 #include "smode/mpfs_smode.h"
 #include "smode/m_shim.h"
 #include "smode/smode_plic.h"
+
+/* The HAL only calls u54_1() if hart 1 is one of the harts it starts. */
+#if (MPFS_HAL_FIRST_HART > 1) || (MPFS_HAL_LAST_HART < 1)
+#error "MPFS_HAL_FIRST_HART..MPFS_HAL_LAST_HART must include hart 1 (U54_1)"
+#endif
 
 /* S-mode entry (MMU bring-up), in smode_start.S. */
 extern void smode_start(void);

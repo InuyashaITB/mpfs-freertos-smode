@@ -270,7 +270,9 @@ SECTIONS
     __text_load  = __text_start;
     __sdata_load = __sdata_start;
     __data_load  = __data_start;
-    __sc_load    = LOADADDR(.ram_code) + ONCHIP_VA_OFFSET;
+    /* PROVIDE: with IMAGE_LOADED_BY_BOOTLOADER = 1 the HAL defines its own
+     * (unused) __sc_load placeholder, which then takes precedence. */
+    PROVIDE(__sc_load = LOADADDR(.ram_code) + ONCHIP_VA_OFFSET);
 
     /* Physical entry point: harts start here with the MMU off. */
     _start_pa = LOADADDR(.text);

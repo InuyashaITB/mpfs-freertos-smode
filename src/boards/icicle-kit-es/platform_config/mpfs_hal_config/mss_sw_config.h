@@ -94,7 +94,11 @@
  *   MPFS_HAL_LAST_HART above
  *
  */
+/* Set by the build (LOADED_BY_BOOTLOADER=0/1, with MPFS_HAL_FIRST_HART and
+ * MPFS_HAL_LAST_HART); these are only the defaults. */
+#ifndef IMAGE_LOADED_BY_BOOTLOADER
 #define IMAGE_LOADED_BY_BOOTLOADER 0
+#endif
 #if (IMAGE_LOADED_BY_BOOTLOADER == 0)
 #define MPFS_HAL_HW_CONFIG
 #endif

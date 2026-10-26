@@ -48,7 +48,8 @@ endif()
 
 if(NOT TARGET MpfsSmode::mpfs_smode)
     mpfs_smode_flags("${MPFS_SMODE_MARCH}" "${MPFS_SMODE_LIBC_SPECS}"
-                     "${MPFS_SMODE_LIBC_LINK_SPECS}" _mpfs_cflags _mpfs_ldflags)
+                     "${MPFS_SMODE_LIBC_LINK_SPECS}" "${MPFS_SMODE_BOOT_DEFS}"
+                     _mpfs_cflags _mpfs_ldflags)
 
     foreach(_lib mpfs_smode_boot freertos_smode mpfs_drivers)
         add_library(MpfsSmode::${_lib} STATIC IMPORTED)

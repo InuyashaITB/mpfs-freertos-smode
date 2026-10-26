@@ -6,8 +6,12 @@ afterwards. The diagrams are [Mermaid](https://mermaid.js.org/), which GitHub
 renders inline.
 
 Applies to branch **`mmu-sv39`**, `make` build of the libraries and
-`examples/freertos-demo` (`IMAGE_LOADED_BY_BOOTLOADER = 0`,
-`MPFS_HAL_HW_CONFIG` defined, `DDR_SUPPORT` off). Stages 1–7 and 9 are in the
+`examples/freertos-demo` in the default standalone boot mode
+(`LOADED_BY_BOOTLOADER=0`, i.e. `IMAGE_LOADED_BY_BOOTLOADER = 0`,
+`MPFS_HAL_HW_CONFIG` defined, `DDR_SUPPORT` off). With
+`LOADED_BY_BOOTLOADER=1` a previous stage (HSS) replaces stages 1–3 and
+starts the image on U54_1, which continues from stage 5; see the README's
+"Boot modes". Stages 1–7 and 9 are in the
 static libraries (`libmpfs_smode_boot.a`, `libfreertos_smode.a`); the
 application provides `s_mode_main()` and, optionally, `smode_m_prehook()`. The image is linked by
 `src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld`: every

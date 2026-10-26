@@ -18,14 +18,25 @@ function(mpfs_smode_default_march out)
     endif()
 endfunction()
 
-# mpfs_smode_flags(<march> <libc-specs> <libc-link-specs> <out-compile> <out-link>)
-function(mpfs_smode_flags march libc_specs libc_link_specs out_c out_ld)
+# HAL boot-mode definitions (mss_sw_config.h); the same as MPFS_BOOT_DEFS in
+# mk/toolchain.mk. loaded_by_bootloader: 0 standalone, 1 started by a
+# previous boot stage (e.g. HSS).
+function(mpfs_smode_boot_defs loaded_by_bootloader first_hart last_hart out)
+    set(${out}
+        "-DIMAGE_LOADED_BY_BOOTLOADER=${loaded_by_bootloader} -DMPFS_HAL_FIRST_HART=${first_hart} -DMPFS_HAL_LAST_HART=${last_hart}"
+        PARENT_SCOPE)
+endfunction()
+
+# mpfs_smode_flags(<march> <libc-specs> <libc-link-specs> <boot-defs>
+#                  <out-compile> <out-link>)
+function(mpfs_smode_flags march libc_specs libc_link_specs boot_defs out_c out_ld)
     separate_arguments(_specs NATIVE_COMMAND "${libc_specs}")
+    separate_arguments(_boot_defs NATIVE_COMMAND "${boot_defs}")
     separate_arguments(_link_specs NATIVE_COMMAND "${libc_link_specs}")
     set(${out_c}
         -march=${march} -mabi=lp64d -mcmodel=medany -mstrict-align
         -fno-jump-tables -ffunction-sections -fdata-sections
-        -fmessage-length=0 -fsigned-char ${_specs}
+        -fmessage-length=0 -fsigned-char ${_specs} ${_boot_defs}
         PARENT_SCOPE)
     set(${out_ld}
         -march=${march} -mabi=lp64d -mcmodel=medany ${_specs} ${_link_specs}

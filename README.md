@@ -163,6 +163,8 @@ application.
 | `MPFS_BOARD_DIR` | `boards/icicle-kit-es` | board configuration headers (relative to `src/`) |
 | `MPFS_LINKER_SCRIPT` | `<board>/platform_config/linker/mpfs-lim-sv39.ld` | installed with the libraries |
 | `MPFS_DRIVERS` | `mss_mmuart mss_gpio` | drivers in `libmpfs_drivers`. To use another MSS driver, copy its folder from Microchip's `platform` repository into `src/platform/drivers/mss/` and add it here |
+| `LOADED_BY_BOOTLOADER` | `0` | `0` standalone, `1` started by a bootloader (e.g. HSS); see [Boot modes](#boot-modes) |
+| `MPFS_HAL_FIRST_HART` / `MPFS_HAL_LAST_HART` | `0`/`4` standalone, `1`/`1` with a bootloader | harts the HAL starts; must include hart 1 |
 | `V` | | `V=1` prints full command lines |
 | `CP` | `cp`; `busybox cp` on Windows | SoftConsole's `build_tools` has `busybox.exe` but no `cp.exe` |
 
@@ -204,7 +206,9 @@ cmake --build build-demo
 
 Cache variables: the same names as the make variables (`FREERTOS_CONFIG_DIR`,
 `MPFS_BOARD_DIR`, `MPFS_LINKER_SCRIPT`, `MPFS_DRIVERS`, `LIBC_SPECS`,
-`LIBC_LINK_SPECS`, `MARCH`, and `CROSS_COMPILE` in the toolchain file
+`LIBC_LINK_SPECS`, `MARCH`, `LOADED_BY_BOOTLOADER` (`ON`/`OFF`),
+`MPFS_HAL_FIRST_HART`/`MPFS_HAL_LAST_HART` (empty = follow
+`LOADED_BY_BOOTLOADER`), and `CROSS_COMPILE` in the toolchain file
 `src/cmake/riscv64-unknown-elf.cmake`), plus `CMAKE_BUILD_TYPE` (`Debug`
 `-O0 -g3` / `Release` `-Os -g`) in place of `BUILD_TYPE`. Paths are relative
 to `src/`, as for make.
@@ -228,6 +232,38 @@ both. Debug builds link to identical code. Release builds differ by a few
 bytes in a handful of functions: the archives are identical, but CMake orders
 them differently on the link line, which shifts `.bss` and the linker's
 `gp`-relative relaxation.
+
+### Boot modes
+
+`LOADED_BY_BOOTLOADER` (make: `0`/`1`, CMake: `OFF`/`ON`) selects how the
+image starts. It sets the HAL's `IMAGE_LOADED_BY_BOOTLOADER`,
+`MPFS_HAL_FIRST_HART` and `MPFS_HAL_LAST_HART` (`mss_sw_config.h` keeps only
+defaults). The library build records it, so applications compile with the
+same settings.
+
+| | Standalone (`0`, default) | Loaded by a bootloader (`1`) |
+|---|---|---|
+| Who does the system start-up | this image, on the E51: clocks/PLLs, I/O mux, SGMII, L2 cache, MPU, PMP, PLIC reset, virtual boot ROM | the previous stage (HSS); the HAL skips all of it |
+| Entry | every hart at `_start`; the E51 releases the U54s | the bootloader starts this image on hart 1 (`MPFS_HAL_FIRST_HART`) |
+| Harts the HAL handles | 0..4 (`e51()`, `u54_2..4()` from the app or the HAL's weak defaults) | 1..1 by default; set `MPFS_HAL_LAST_HART=4` if the bootloader starts this image on all U54s |
+| Code size (demo, Debug) | 57.4 KB | 49.8 KB |
+| Renode launcher in this repo | yes | no (it starts the harts at reset, with no HSS) |
+
+Either way, `u54_1()` → `smode_m_prehook()` → S-mode → `s_mode_main()` is
+the same.
+
+With a bootloader:
+* The image must be loaded where the linker script puts it (L2LIM at physical
+  `0x08000000`, entry `0x08000000`). The bootloader must start it in M-mode
+  on U54_1 (HSS: a bare-metal payload, not through OpenSBI), with enough
+  L2 configured as LIM. To run from DDR instead you need your own linker script
+  (`MPFS_LINKER_SCRIPT`). Note that `sv39.c` assumes the code lies in the
+  on-chip gigapage, so a DDR-resident layout also needs its mapping extended;
+  that is not provided.
+* The bootloader owns the PMP. The shim's write to PMP entry 0 only takes
+  effect if that entry is not locked.
+* The bootloader must start the U54s (and their clocks) the image uses.
+  Peripherals for the app are still set up in `smode_m_prehook()`.
 
 ### Writing an application
 
