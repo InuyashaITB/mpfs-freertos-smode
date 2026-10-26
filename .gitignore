@@ -9,6 +9,6 @@
 # Eclipse per-user settings
 /.settings*/
 
-# CMake build / install output (see Makefile)
-/build*/
-/install*/
+# Build output and default install prefix (see Makefile)
+/build/
+/dist/

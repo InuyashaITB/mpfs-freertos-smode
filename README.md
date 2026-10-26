@@ -7,7 +7,7 @@ U54 core (U54_1). Built from the `mpfs-gpio-interrupt` example (same HAL
 v2022.2.
 
 Everything up to the application's `s_mode_main()` is packaged as **static
-libraries** built with CMake; the demo is a separate application project
+libraries** built with plain GNU make; the demo is a separate application project
 that links them. See [Libraries and applications](#libraries-and-applications).
 
 **Branch `mmu-sv39`:** the S-mode kernel runs with the **Sv39 MMU on**, from
@@ -87,61 +87,86 @@ PLIC handlers keep the HAL's names (e.g.
 S context by `src/freertos_glue/smode_irq.c`.
 
 Code that runs in M-mode (`smode_m_prehook()`, anything it calls) must be
-built with the library's compile options; linking `MpfsSmode::mpfs_smode`
-applies them (see [How one image runs both physical and
+built with the library's compile options; `MPFS_SMODE_CFLAGS` from
+`mpfs_smode.mk` has them (see [How one image runs both physical and
 virtual](#how-one-image-runs-both-physical-m-mode-and-virtual-s-mode)).
 
 ### Building
 
-Requirements: CMake ≥ 3.24 and a RISC-V bare-metal GCC with newlib-nano
-(SoftConsole's `riscv64-unknown-elf-gcc` on `PATH`).
+Plain GNU make. Requirements: what SoftConsole ships (`make`, and `sh`,
+`mkdir`, `cp`, `rm` from `build_tools`) and a RISC-V bare-metal GCC with
+newlib-nano (`riscv64-unknown-elf-gcc` on `PATH`). Nothing else to install;
+the same Makefiles work on Linux.
 
 ```sh
-make                        # = cmake -B build ... && cmake --build build
-make install PREFIX=dist    # dist/lib/*.a, dist/include, dist/lib/ldscripts, dist/lib/cmake/MpfsSmode
+make                        # libraries, install tree build/dist, demo
+make libs                   # libraries + install tree only
+make install PREFIX=dist    # copy the install tree to dist/ (any path, e.g. C:/mpfs-smode)
+make clean                  # remove build/
 ```
 
-or with CMake directly:
+Outputs:
 
-```sh
-cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/riscv64-unknown-elf.cmake
-cmake --build build
-cmake --install build --prefix dist
+```
+build/dist/                          the install tree ('make install' copies it)
+  lib/libmpfs_smode_boot.a
+  lib/libfreertos_smode.a
+  lib/libmpfs_drivers.a
+  lib/ldscripts/mpfs-lim-sv39.ld
+  include/                           mpfs_hal/, hal/, drivers/, fpga_design_config/,
+                                     mpfs_hal_config/, smode/ (incl. mpfs_smode.h)
+  include/freertos/                  kernel + port headers, the FreeRTOSConfig.h used
+  mpfs_smode.mk                      for application Makefiles
+  mk/toolchain.mk, mk/build_config.mk
+build/examples/freertos-demo/freertos-demo.elf (+ .hex, .map)
 ```
 
-Outputs: `build/libmpfs_smode_boot.a`, `build/libfreertos_smode.a`,
-`build/libmpfs_drivers.a` and the demo
-`build/examples/freertos-demo/freertos-demo.elf` (+ `.hex`, `.map`).
+The demo is built only from `build/dist`, exactly like an external
+application.
 
-| CMake cache variable | Default | |
+| make variable | Default | |
 |---|---|---|
-| `CMAKE_BUILD_TYPE` | `Debug` (`-O0 -g3`) | or `Release` (`-Os`) |
-| `RISCV_TOOLCHAIN_PREFIX` | `riscv64-unknown-elf-` | may include a directory |
-| `RISCV_LIBC_SPECS` / `RISCV_LIBC_LINK_SPECS` | `--specs=nano.specs` / `--specs=nosys.specs` | for a picolibc toolchain: `--specs=picolibc.specs` / empty |
+| `BUILD_TYPE` | `Debug` (`-O0 -g3`) | or `Release` (`-Os -g`) |
+| `CROSS_COMPILE` | `riscv64-unknown-elf-` | may include a directory |
+| `LIBC_SPECS` / `LIBC_LINK_SPECS` | `--specs=nano.specs` / `--specs=nosys.specs` | for a picolibc toolchain: `--specs=picolibc.specs` / empty |
+| `MARCH` | `rv64gc`, `rv64gc_zicsr_zifencei` on GCC ≥ 12 | |
 | `FREERTOS_CONFIG_DIR` | `examples/freertos-demo` | `FreeRTOSConfig.h` that `libfreertos_smode` is built against (and installs) |
 | `MPFS_BOARD_DIR` | `src/boards/icicle-kit-es` | board configuration headers |
 | `MPFS_LINKER_SCRIPT` | `<board>/platform_config/linker/mpfs-lim-sv39.ld` | installed with the libraries |
-| `MPFS_DRIVERS` | `mss_mmuart;mss_gpio` | drivers in `libmpfs_drivers` |
-| `MPFS_SMODE_BUILD_EXAMPLE` | `ON` | build `examples/freertos-demo` |
+| `MPFS_DRIVERS` | `mss_mmuart mss_gpio` | drivers in `libmpfs_drivers` |
+| `V` | | `V=1` prints full command lines |
+
+After changing `CROSS_COMPILE`, `LIBC_SPECS` or `MARCH`, run `make clean`.
+Objects are kept per `BUILD_TYPE`, so switching that needs no clean.
 
 Compile options applied to the libraries and to every application:
 `-march=rv64gc -mabi=lp64d -mcmodel=medany -mstrict-align -fno-jump-tables
--ffunction-sections -fdata-sections` (plus `_zicsr_zifencei` on GCC ≥ 12);
-link: `-nostartfiles -Wl,--gc-sections -T mpfs-lim-sv39.ld`.
+-ffunction-sections -fdata-sections`; link: `-nostartfiles -Wl,--gc-sections
+-T mpfs-lim-sv39.ld`.
 
 ### Writing an application
 
-```cmake
-cmake_minimum_required(VERSION 3.24)
-project(my_app C ASM)
-find_package(MpfsSmode REQUIRED)        # -DCMAKE_PREFIX_PATH=<install prefix>
-add_executable(my_app main.c)
-set_target_properties(my_app PROPERTIES SUFFIX ".elf")
-target_link_libraries(my_app PRIVATE MpfsSmode::mpfs_smode MpfsSmode::mpfs_drivers)
+Start from `examples/freertos-demo/Makefile`, or include `mpfs_smode.mk` from
+the install tree in your own Makefile:
+
+```make
+MPFS_SMODE_DIR := C:/mpfs-smode            # the 'make install' PREFIX
+include $(MPFS_SMODE_DIR)/mpfs_smode.mk
+
+OBJS := build/main.o
+
+build/my_app.elf: $(OBJS) $(MPFS_SMODE_DEPS)
+	$(CC) $(MPFS_SMODE_LDFLAGS) $(OBJS) $(MPFS_SMODE_LIBS) -o $@
+
+build/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC) $(MPFS_SMODE_CFLAGS) -c $< -o $@
 ```
 
-Configure it with the installed toolchain file:
-`cmake -B build -DCMAKE_TOOLCHAIN_FILE=<prefix>/lib/cmake/MpfsSmode/riscv64-unknown-elf.cmake -DCMAKE_PREFIX_PATH=<prefix>`.
+`mpfs_smode.mk` provides `MPFS_SMODE_CFLAGS` (compile options + include
+paths), `MPFS_SMODE_LDFLAGS` (link options + linker script),
+`MPFS_SMODE_LIBS`, `MPFS_SMODE_DEPS` and `CC`/`OBJCOPY`/`SIZE`. Its toolchain
+defaults are the ones the libraries were built with (`mk/build_config.mk`).
 
 ```c
 #include "FreeRTOS.h"
@@ -156,16 +181,16 @@ void s_mode_main(void)          /* S-mode, MMU on, FreeRTOS trap handler install
 }
 ```
 
-`MpfsSmode::mpfs_smode` links both libraries with `--whole-archive`: weak
-defaults (the HAL's `u54_1()`, the boot library's `smode_os_init()`) live in
-archive members that are always loaded, so without it the strong definitions
-would never be pulled in. `--gc-sections` removes what is unused. To use another
-linker script, set `MPFS_SMODE_LINKER_SCRIPT` before `find_package()`.
+`MPFS_SMODE_LIBS` links both libraries with `--whole-archive`: weak defaults
+(the HAL's `u54_1()`, the boot library's `smode_os_init()`) live in archive
+members that are always loaded, so without it the strong definitions would
+never be pulled in. `--gc-sections` removes what is unused. To use another
+linker script, set `MPFS_SMODE_LDSCRIPT` before including `mpfs_smode.mk`.
 
 `FreeRTOSConfig.h` is baked into `libfreertos_smode.a`. The installed copy
-(`<prefix>/include/freertos/FreeRTOSConfig.h`, next to `FreeRTOS.h`) is the
-one applications compile against. To change it, rebuild the library with
-`-DFREERTOS_CONFIG_DIR=<dir with your FreeRTOSConfig.h>`.
+(`include/freertos/FreeRTOSConfig.h`, next to `FreeRTOS.h`) is the one
+applications compile against. To change it, rebuild the library with
+`make FREERTOS_CONFIG_DIR=<dir with your FreeRTOSConfig.h>`.
 `configPORT_YIELD_VIA_SBI_IPI` / `configSBI_HART_ID` must stay consistent
 with `SMODE_HART` (checked at build time).
 
@@ -173,8 +198,8 @@ with `SMODE_HART` (checked at build time).
 
 | File | What |
 |---|---|
-| `CMakeLists.txt`, `cmake/` | Library build, install and CMake package (`find_package(MpfsSmode)`); toolchain file |
-| `Makefile` | Wrapper around the CMake build (command line and SoftConsole) |
+| `Makefile` | Library build, install tree, demo (plain GNU make; command line and SoftConsole) |
+| `mk/toolchain.mk`, `mk/mpfs_smode.mk` | Shared tools/flags; what an application Makefile includes (installed) |
 | `src/smode/mpfs_smode.h` | Public application interface of the libraries |
 | `src/smode/u54_1_boot.c` | `u54_1()`: pre-hook, PLIC S-context clean slate, handoff |
 | `src/smode/m_shim.*`, `m_shim_trap.S` | M-mode shim: handoff, SBI timer/IPI, MTIP→STIP |
@@ -189,7 +214,7 @@ with `SMODE_HART` (checked at build time).
 | `src/middleware/README.md` | Deviations from the upstream FreeRTOS RISC-V port, M-mode vs S-mode |
 | `src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld` | *(mmu-sv39)* Linker script with physical/virtual regions |
 | `src/boards/icicle-kit-es/platform_config/mpfs_hal_config/mss_sw_config.h` | `DDR_SUPPORT` commented out (Renode start-up; image runs from L2LIM) |
-| `examples/freertos-demo/` | The demo application: `CMakeLists.txt`, `FreeRTOSConfig.h` (1 kHz tick, mtime 1 MHz @ 0x0200BFF8, FPU context on, 32 KB heap) |
+| `examples/freertos-demo/` | The demo application: `Makefile` (template for new apps), `FreeRTOSConfig.h` (1 kHz tick, mtime 1 MHz @ 0x0200BFF8, FPU context on, 32 KB heap) |
 | `examples/freertos-demo/app_main.c` | `s_mode_main()`: PLIC sources, demo tasks (console, blink, spin "DDR Life", ddr, heartbeat) and PLIC handlers |
 | `examples/freertos-demo/m_prehook.c` | `smode_m_prehook()`: MMUART1, GPIO2, GPIO→PLIC routing; `smode_diag_puts()` on MMUART1 |
 | `examples/freertos-demo/other_harts.c` | `e51()` (UART0 banner) and `u54_2..4()`: park in WFI |
@@ -205,9 +230,8 @@ with `SMODE_HART` (checked at build time).
 1. Import: *File → Import → General → Existing Projects into Workspace*, select
    this folder (or copy it next to the other examples first).
 2. Build the project (*Project → Build*). It runs `make` in the project
-   folder, i.e. the CMake build into `build/`. CMake ≥ 3.24 must be on the
-   `PATH` SoftConsole uses, as well as `riscv64-unknown-elf-gcc`. (Or run
-   `make` in a shell.)
+   folder with SoftConsole's own `make` and toolchain, into `build/`. (Or
+   run `make` in a shell.)
 3. Run the launch group **mpfs-freertos-smode Renode All-harts
    Start-platform-and-debug**. It adds 2 GiB of DDR to the Renode platform
    (`renode/mpfs-ddr-38bit-cached-3gib.repl`), starts all harts at the
@@ -376,7 +400,7 @@ run the same code from the physical copy. That works because:
   on-chip gigapage is aliased with a single offset, so the distances are
   the same in both views.
 * **`-fno-jump-tables`** (in the compile options of the libraries and of
-  every application linking `MpfsSmode::mpfs_smode`). Otherwise `switch`
+  every application using `MPFS_SMODE_CFLAGS`). Otherwise `switch`
   statements compile to tables of absolute (virtual) addresses, which crash
   in M-mode. The HAL's `main_other_hart()` was the first to hit this.
 * Symbols the linker defines for copy loops (`__sc_load`, `__data_load`, ...)

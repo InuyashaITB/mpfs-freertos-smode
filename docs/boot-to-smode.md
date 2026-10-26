@@ -5,7 +5,7 @@ supervisor mode with the Sv39 MMU on, and shows what M-mode keeps doing
 afterwards. The diagrams are [Mermaid](https://mermaid.js.org/), which GitHub
 renders inline.
 
-Applies to branch **`mmu-sv39`**, CMake build of the libraries and
+Applies to branch **`mmu-sv39`**, `make` build of the libraries and
 `examples/freertos-demo` (`IMAGE_LOADED_BY_BOOTLOADER = 0`,
 `MPFS_HAL_HW_CONFIG` defined, `DDR_SUPPORT` off). Stages 1–7 and 9 are in the
 static libraries (`libmpfs_smode_boot.a`, `libfreertos_smode.a`); the
