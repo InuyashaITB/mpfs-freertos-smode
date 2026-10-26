@@ -93,8 +93,8 @@ virtual](#how-one-image-runs-both-physical-m-mode-and-virtual-s-mode)).
 
 ### Building
 
-Plain GNU make. Requirements: what SoftConsole ships (`make`, and `sh`,
-`mkdir`, `cp`, `rm` from `build_tools`) and a RISC-V bare-metal GCC with
+Plain GNU make. Requirements: what SoftConsole ships (`make`, `mkdir`,
+`rm`, `echo`, `sh` and `busybox` from `build_tools`) and a RISC-V bare-metal GCC with
 newlib-nano (`riscv64-unknown-elf-gcc` on `PATH`). Nothing else to install;
 the same Makefiles work on Linux.
 
@@ -135,6 +135,7 @@ application.
 | `MPFS_LINKER_SCRIPT` | `<board>/platform_config/linker/mpfs-lim-sv39.ld` | installed with the libraries |
 | `MPFS_DRIVERS` | `mss_mmuart mss_gpio` | drivers in `libmpfs_drivers` |
 | `V` | | `V=1` prints full command lines |
+| `CP` | `cp`; `busybox cp` on Windows | SoftConsole's `build_tools` has `busybox.exe` but no `cp.exe` |
 
 After changing `CROSS_COMPILE`, `LIBC_SPECS` or `MARCH`, run `make clean`.
 Objects are kept per `BUILD_TYPE`, so switching that needs no clean.

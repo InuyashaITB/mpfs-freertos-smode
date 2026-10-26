@@ -146,7 +146,7 @@ define COPY_RULE
 STAGED += $(1)
 $(1): $(2)
 	@mkdir -p $$(@D)
-	$$(Q)cp $$< $$@
+	$$(Q)$$(CP) $$< $$@
 endef
 stage = $(foreach f,$(2),$(eval $(call COPY_RULE,$(STAGE)$(if $(1),/$(1))/$(patsubst $(3)/%,%,$(f)),$(f))))
 
@@ -187,7 +187,7 @@ demo: stage
 
 install: stage
 	@mkdir -p $(PREFIX)
-	cp -r $(STAGE)/. $(PREFIX)/
+	$(CP) -r $(STAGE)/. $(PREFIX)/
 
 clean:
 	rm -rf $(BUILD_DIR)

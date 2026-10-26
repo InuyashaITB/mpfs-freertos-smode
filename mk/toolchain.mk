@@ -15,11 +15,20 @@
 #   MARCH            -march value; default rv64gc, plus _zicsr_zifencei on
 #                    GCC >= 12 (which split them out of 'g')
 #   V=1              print full command lines
+#   CP               copy command. Default: cp; on Windows 'busybox cp', since
+#                    SoftConsole's build_tools has busybox.exe but no cp.exe
+#                    (make runs simple recipe lines without a shell there)
 
 CROSS_COMPILE   ?= riscv64-unknown-elf-
 BUILD_TYPE      ?= Debug
 LIBC_SPECS      ?= --specs=nano.specs
 LIBC_LINK_SPECS ?= --specs=nosys.specs
+
+ifeq ($(OS),Windows_NT)
+  CP ?= busybox cp
+else
+  CP ?= cp
+endif
 
 CC      := $(CROSS_COMPILE)gcc
 AR      := $(CROSS_COMPILE)ar
