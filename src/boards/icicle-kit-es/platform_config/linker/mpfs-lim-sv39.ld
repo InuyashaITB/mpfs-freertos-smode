@@ -7,7 +7,7 @@
  * Sv39 MMU on, with a 3 GiB window of the 38-bit cached DDR mapped for it.
  * How that window is used is up to the application (see the DDR window
  * comment in SECTIONS).
- * Based on the HAL's platform_config_reference/linker/mpfs-lim.ld.
+ * Based on the MPFS HAL's reference linker script mpfs-lim.ld.
  *
  * Address map (gigapage = 1 GiB):
  *

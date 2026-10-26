@@ -63,7 +63,7 @@ After the handoff, M-mode on U54_1 only runs for traps from S-mode:
 |---|---|
 | `libmpfs_smode_boot.a` | MPFS HAL (start-up, `mss_entry.S`, PLIC/CLINT/PMP/L2, NWC), `u54_1()`, M-mode SBI shim, Sv39 bring-up, `smode_start`, diagnostics (`src/platform/mpfs_hal`, `src/platform/hal`, `src/smode`) |
 | `libfreertos_smode.a` | FreeRTOS kernel, `heap_4`, the S-mode port, PLIC dispatch / fault reporting / FreeRTOS hooks, `smode_os_init()` (`src/middleware/FreeRTOS-Kernel`, `src/freertos_glue`). Compiled against the `FreeRTOSConfig.h` in `FREERTOS_CONFIG_DIR` |
-| `libmpfs_drivers.a` | MSS drivers named in `MPFS_DRIVERS` (default `mss_mmuart;mss_gpio`), for applications. The two libraries above do not use them |
+| `libmpfs_drivers.a` | MSS drivers named in `MPFS_DRIVERS` (`mss_mmuart`, `mss_gpio`: the only ones in this repository), for applications. The two libraries above do not use them |
 
 The libraries only handle **U54_1**. They define `u54_1()` and nothing for
 the E51 or U54_2..4: those run the application's `e51()` / `u54_2()` ..
@@ -162,7 +162,7 @@ application.
 | `FREERTOS_CONFIG_DIR` | `freertos_glue/config` (library's reference config); the root Makefile passes `../examples/freertos-demo` | `FreeRTOSConfig.h` that `libfreertos_smode` is built against (and installs). Relative to `src/` |
 | `MPFS_BOARD_DIR` | `boards/icicle-kit-es` | board configuration headers (relative to `src/`) |
 | `MPFS_LINKER_SCRIPT` | `<board>/platform_config/linker/mpfs-lim-sv39.ld` | installed with the libraries |
-| `MPFS_DRIVERS` | `mss_mmuart mss_gpio` | drivers in `libmpfs_drivers` |
+| `MPFS_DRIVERS` | `mss_mmuart mss_gpio` | drivers in `libmpfs_drivers`. To use another MSS driver, copy its folder from Microchip's `platform` repository into `src/platform/drivers/mss/` and add it here |
 | `V` | | `V=1` prints full command lines |
 | `CP` | `cp`; `busybox cp` on Windows | SoftConsole's `build_tools` has `busybox.exe` but no `cp.exe` |
 
@@ -285,7 +285,16 @@ with `SMODE_HART` (checked at build time).
 | `.cproject` | One configuration (LIM-Debug), Makefile project calling the top-level `Makefile`; include paths kept for the indexer |
 | `*.launch` | The two Renode launchers, renamed for this project. *(mmu-sv39)* PC = `0x08000000`, stop at `s_mode_main`, load the DDR repl; ELF = `build/examples/freertos-demo/freertos-demo.elf` |
 
-`src/application/inc/common.h` from the example was removed (unused).
+Removed from the example because nothing here uses them: `src/application/inc/common.h`,
+the other boards (`custom-board`, `_generated`), the Libero design inputs
+(`icicle-kit-es/fpga_design/`) and the configuration generator
+(`platform/soc_config_generator/`), the DDR build configuration
+(`platform_config_ddr/`), the HAL's reference linker scripts and config
+(`platform/platform_config_reference/`), the HAL's `Jenkinsfile`, and every MSS
+driver except `mss_mmuart` and `mss_gpio`. The board's design headers
+(`icicle-kit-es/fpga_design_config/`) are kept as generated; to change the
+design, regenerate them with Microchip's `mpfs_configuration_generator.py` from
+the Libero XML, outside this project.
 
 ## Build and run (SoftConsole + Renode)
 

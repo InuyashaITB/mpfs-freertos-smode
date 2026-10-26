@@ -157,8 +157,7 @@ $(1): $(2)
 endef
 stage = $(foreach f,$(2),$(eval $(call COPY_RULE,$(STAGE)$(if $(1),/$(1))/$(patsubst $(3)/%,%,$(f)),$(f))))
 
-PLATFORM_HDRS := $(filter-out $(PLATFORM)/platform_config_reference/% $(PLATFORM)/soc_config_generator/%,\
-                   $(call rwildcard,$(PLATFORM),*.h))
+PLATFORM_HDRS := $(call rwildcard,$(PLATFORM),*.h)
 
 $(call stage,include,$(PLATFORM_HDRS),$(PLATFORM))
 $(call stage,include/fpga_design_config,$(call rwildcard,$(MPFS_BOARD_DIR)/fpga_design_config,*.h),$(MPFS_BOARD_DIR)/fpga_design_config)
