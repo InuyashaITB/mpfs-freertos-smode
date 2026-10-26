@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: MIT
+#
+# find_package(MpfsSmode) for an installed libmpfs_smode_boot / libfreertos_smode.
+#
+# Targets:
+#   MpfsSmode::mpfs_smode    both libraries (whole-archive), headers, compile
+#                            options and the linker script: link this.
+#   MpfsSmode::mpfs_drivers  MSS drivers the libraries were built with.
+#
+# Variables:
+#   MpfsSmode_LINKER_SCRIPT  installed linker script. Set
+#                            MPFS_SMODE_LINKER_SCRIPT before find_package() to
+#                            link with your own copy instead.
+#   MpfsSmode_TOOLCHAIN_FILE toolchain file the package was built with.
+#
+# Use the same toolchain (prefix, RISCV_LIBC_SPECS) as the libraries.
+
+@PACKAGE_INIT@
+
+set_and_check(MpfsSmode_LIBDIR "@PACKAGE_MPFS_SMODE_LIBDIR@")
+set(MpfsSmode_TOOLCHAIN_FILE "${CMAKE_CURRENT_LIST_DIR}/riscv64-unknown-elf.cmake")
+
+if(MPFS_SMODE_LINKER_SCRIPT)
+    set(MpfsSmode_LINKER_SCRIPT "${MPFS_SMODE_LINKER_SCRIPT}")
+else()
+    set(MpfsSmode_LINKER_SCRIPT "${MpfsSmode_LIBDIR}/ldscripts/@MPFS_LINKER_SCRIPT_NAME@")
+endif()
+
+# $<LINK_LIBRARY:WHOLE_ARCHIVE,...> on a Generic (bare-metal) system.
+if(NOT CMAKE_LINK_LIBRARY_USING_WHOLE_ARCHIVE_SUPPORTED)
+    set(CMAKE_LINK_LIBRARY_USING_WHOLE_ARCHIVE
+        "LINKER:--whole-archive" "<LINK_ITEM>" "LINKER:--no-whole-archive")
+    set(CMAKE_LINK_LIBRARY_USING_WHOLE_ARCHIVE_SUPPORTED TRUE)
+endif()
+
+if(NOT TARGET MpfsSmode::mpfs_smode)
+    include("${CMAKE_CURRENT_LIST_DIR}/MpfsSmodeTargets.cmake")
+    set_property(TARGET MpfsSmode::mpfs_smode_options APPEND PROPERTY
+        INTERFACE_LINK_OPTIONS "-T${MpfsSmode_LINKER_SCRIPT}")
+endif()
+
+check_required_components(MpfsSmode)

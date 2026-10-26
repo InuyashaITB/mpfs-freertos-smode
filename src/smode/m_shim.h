@@ -11,7 +11,8 @@
  *       * SBI ecalls from S-mode (TIME.set_timer, IPI.send_ipi to self,
  *         legacy set_timer, legacy console_putchar, BASE probe)
  *       * machine timer interrupt -> forwarded to S-mode as sip.STIP
- *       * anything else is fatal: reported on MMUART1 and the hart is parked.
+ *       * anything else is fatal: reported through smode_diag_puts() and the
+ *         hart is parked.
  */
 
 #ifndef SMODE_M_SHIM_H_

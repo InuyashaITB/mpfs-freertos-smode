@@ -16,7 +16,7 @@ comparison of M-mode and S-mode handling, is in
 | Status / return | `mstatus`, `mepc`, `mcause`, `mret` | `sstatus`, `sepc`, `scause`, `sret` |
 | Global interrupt enable | `mstatus.MIE` (bit 3) | `sstatus.SIE` (bit 1) |
 | Initial task status | `MPIE=1, MPP=M` (0x1880) | `SPIE=1, SPP=S` (0x120) |
-| Trap vector | `mtvec` | `stvec` (direct mode), set by the application |
+| Trap vector | `mtvec` | `stvec` (direct mode), set by `smode_os_init()` in `src/freertos_glue/smode_irq.c` |
 | Yield | `ecall` (mcause 11) | set `sip.SSIP` (scause 1); handler clears it. With `configPORT_YIELD_VIA_SBI_IPI = 1`, SSIP is set by M-mode via SBI `IPI.send_ipi` to self |
 | Tick | machine timer (mcause 7), port writes `mtimecmp` | supervisor timer (scause 5), port calls SBI `TIME.set_timer` |
 | Interrupt enables at start | `mie`: MTIE + MEIE | `sie`: SSIE + STIE + SEIE |
@@ -35,7 +35,7 @@ not act on S-mode writes to `sip`, such as Renode 1.13: see
 ## Requirements on M-mode firmware
 
 Whatever runs in M-mode (OpenSBI, or the small shim in
-`src/application/smode/m_shim.c` of this project) must:
+`src/smode/m_shim.c` of this project) must:
 
 1. Delegate interrupts in `mideleg`: SSIP (bit 1), STIP (bit 5) and, if PLIC
    interrupts are used, SEIP (bit 9).
@@ -51,6 +51,9 @@ Whatever runs in M-mode (OpenSBI, or the small shim in
    (EID `0x735049`, FID 0) for the calling hart by setting `mip.SSIP`.
 
 ## Application responsibilities
+
+In this project the first two are done by `libfreertos_smode`
+(`src/freertos_glue/smode_irq.c`); the others still apply to application code.
 
 * Write `stvec = freertos_risc_v_trap_handler` before `vTaskStartScheduler()`.
 * Provide `freertos_risc_v_application_interrupt_handler(scause, sepc)` for

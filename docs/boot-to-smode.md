@@ -5,9 +5,11 @@ supervisor mode with the Sv39 MMU on, and shows what M-mode keeps doing
 afterwards. The diagrams are [Mermaid](https://mermaid.js.org/), which GitHub
 renders inline.
 
-Applies to branch **`mmu-sv39`**, **LIM-Debug** configuration
-(`IMAGE_LOADED_BY_BOOTLOADER = 0`, `MPFS_HAL_HW_CONFIG` defined, `DDR_SUPPORT`
-off). The image is linked by
+Applies to branch **`mmu-sv39`**, CMake build of the libraries and
+`examples/freertos-demo` (`IMAGE_LOADED_BY_BOOTLOADER = 0`,
+`MPFS_HAL_HW_CONFIG` defined, `DDR_SUPPORT` off). Stages 1–7 and 9 are in the
+static libraries (`libmpfs_smode_boot.a`, `libfreertos_smode.a`); the
+application provides `s_mode_main()` and, optionally, `smode_m_prehook()`. The image is linked by
 `src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld`: every
 section is **linked at its virtual address** in the upper half of the Sv39
 address space (`0xFFFFFFC0_08000000`) and **loaded at its physical address**
@@ -20,12 +22,12 @@ S-mode turns the MMU on in `smode_start` and continues at the virtual alias
 | 1. Reset entry | M | all | `src/platform/mpfs_hal/startup_gcc/mss_entry.S` |
 | 2. Platform init, wake other harts | M | E51 | `main_first_hart()` in `src/platform/mpfs_hal/startup_gcc/system_startup.c` |
 | 3. Per-hart dispatch | M | all | `main_other_hart()` in `system_startup.c` |
-| 4. Release U54_1, park | M | E51, U54_2..4 | `src/application/hart0/e51.c`, `hart2..4/u54_N.c`, `inc/hart_park.h` |
-| 5. Peripheral + PLIC S-context set-up | M | U54_1 | `src/application/hart1/u54_1.c` |
-| 6. Delegation, PMP, `satp = 0`, `mret` | M → S | U54_1 | `m_shim_enter_smode()` in `src/application/smode/m_shim.c` |
-| 7. Sv39 page tables, `satp` on, jump to the virtual alias | S (MMU off → on) | U54_1 | `smode_start` in `src/application/smode/smode_start.S`, `sv39_build()` in `smode/sv39.c` |
-| 8. FreeRTOS start | S (virtual) | U54_1 | `s_mode_main()` in `src/application/hart1/app_main.c`, `portable/GCC/RISC-V-SMode/` |
-| 9. Runtime traps into M-mode | M (physical) | U54_1 | `src/application/smode/m_shim_trap.S`, `m_shim.c` |
+| 4. Other harts (not handled by the libraries) | M | E51, U54_2..4 | HAL weak `e51()`/`u54_N()`, or the application's (demo: `examples/freertos-demo/other_harts.c`) |
+| 5. Application M-mode pre-hook, PLIC S-context clean slate | M | U54_1 | `u54_1()` in `src/smode/u54_1_boot.c`; demo pre-hook `examples/freertos-demo/m_prehook.c` |
+| 6. Delegation, PMP, `satp = 0`, `mret` | M → S | U54_1 | `m_shim_enter_smode()` in `src/smode/m_shim.c` |
+| 7. Sv39 page tables, `satp` on, jump to the virtual alias, FreeRTOS trap handler | S (MMU off → on) | U54_1 | `smode_start` in `src/smode/smode_start.S`, `sv39_build()` in `src/smode/sv39.c`, `smode_os_init()` in `src/freertos_glue/smode_irq.c` |
+| 8. FreeRTOS start | S (virtual) | U54_1 | the application's `s_mode_main()` (demo: `examples/freertos-demo/app_main.c`), `portable/GCC/RISC-V-SMode/` |
+| 9. Runtime traps into M-mode | M (physical) | U54_1 | `src/smode/m_shim_trap.S`, `m_shim.c` |
 
 ## 1. Overview
 
@@ -40,19 +42,18 @@ flowchart TD
     WFI1 --> MOH["main_other_hart()<br/>init_pmp(hartid), app stack"]
     MFH --> MOH0["main_other_hart()<br/>hart 0"]
 
-    MOH0 --> E51["e51()<br/>UART0 banner"]
-    MOH -->|"hart 1"| U541["u54_1()<br/>M-mode"]
-    MOH -->|"harts 2..4"| U54N["u54_N()"] --> PARK2["park_this_hart()<br/>WFI forever"]
+    MOH0 --> E51["e51()<br/>application or HAL weak default"]
+    MOH -->|"hart 1"| U541["u54_1()<br/>M-mode, library"]
+    MOH -->|"harts 2..4"| U54N["u54_N()<br/>application or HAL weak default"] --> PARK2["parked"]
+    E51 --> PARK0["parked"]
 
-    E51 -->|"wait g_u54_1_waiting_for_release<br/>raise_soft_interrupt(1)"| U541
-    E51 --> PARK0["park_this_hart()<br/>WFI forever"]
-
-    U541 --> PLAT["m_mode_platform_init()<br/>clocks, MMUART1, GPIO2"]
-    PLAT --> PLIC["m_mode_plic_init_for_smode()<br/>sources 43/44/118 → S-context"]
+    U541 --> PLAT["smode_m_prehook()<br/>application (demo: clocks, MMUART1, GPIO2)"]
+    PLAT --> PLIC["m_mode_plic_init_for_smode()<br/>all sources off, S threshold 0"]
     PLIC --> SHIM["m_shim_enter_smode()<br/>mtvec, mideleg/medeleg, PMP, satp=0"]
     SHIM -->|"mret, MPP=S<br/>physical PC"| SSTART["smode_start<br/>S-mode, MMU off<br/>stvec = smode_early_trap"]
     SSTART --> SV39["sv39_build()<br/>gigapage root table"]
-    SV39 -->|"satp = Sv39<br/>sp, pc, gp += VA - PA"| SMAIN["s_mode_main()<br/>virtual PC 0xFFFFFFC0_08..<br/>stvec = FreeRTOS handler"]
+    SV39 -->|"satp = Sv39<br/>sp, pc, gp += VA - PA"| OSINIT["smode_os_init()<br/>virtual PC 0xFFFFFFC0_08..<br/>stvec = FreeRTOS handler"]
+    OSINIT --> SMAIN["s_mode_main() (application)<br/>enable PLIC sources, create tasks"]
     SMAIN --> SCHED["vTaskStartScheduler()"]
     SCHED --> TASKS(["FreeRTOS tasks in S-mode, MMU on<br/>console, blink, spin, heartbeat"])
 
@@ -62,7 +63,7 @@ flowchart TD
     classDef park fill:#eee,stroke:#888,color:#555
     class ENTRY,MFH,WFI1,MOH,MOH0,E51,U541,U54N,PLAT,PLIC,SHIM m
     class SSTART,SV39 sp
-    class SMAIN,SCHED,TASKS s
+    class OSINIT,SMAIN,SCHED,TASKS s
     class PARK0,PARK2 park
 ```
 
@@ -103,7 +104,7 @@ Notes:
 * `mstatus.FS` is turned on here and is never turned off, which is what the
   S-mode port needs for `configENABLE_FPU = 1`.
 
-## 3. E51 brings up the platform and releases U54_1
+## 3. E51 brings up the platform and releases the U54s
 
 ```mermaid
 sequenceDiagram
@@ -129,42 +130,35 @@ sequenceDiagram
     E51->>HW: FIC0..3 clocks on
     E51->>E51: main_other_hart → e51()
 
-    U1->>U1: init_pmp(1), sp = __app_stack_top_h1 → u54_1()
-    U2->>U2: init_pmp(N) → u54_N() → park_this_hart()
-
-    U1->>HW: clear_soft_interrupt, mie = MSIP
-    U1->>U1: g_u54_1_waiting_for_release = 1
-    U1->>U1: wfi
-    E51->>HW: UART0 banner
-    E51->>E51: spin until g_u54_1_waiting_for_release
-    E51->>HW: raise_soft_interrupt(1)
-    HW-->>U1: MSIP
-    U1->>HW: clear_soft_interrupt, mie = 0
-    E51->>E51: park_this_hart() (WFI forever)
+    U1->>U1: init_pmp(1), sp = __app_stack_top_h1 → u54_1() (library)
+    U2->>U2: init_pmp(N) → u54_N() (application / HAL default)
+    E51->>E51: e51() (application / HAL default)
 ```
 
-U54_1 waits twice: the HAL wake-up (steps 4–6) gets it out of
-`mss_entry.S`, and the application-level release (steps 15–19) keeps it
-from touching peripherals before `e51()` has run. The
-`g_u54_1_waiting_for_release` flag stops the release IPI from being wiped by
-U54_1's own `clear_soft_interrupt()`.
+The E51 has finished the whole platform start-up (memory, clocks, PLIC)
+before it releases any U54, so `u54_1()` needs no further handshake and the
+libraries do not depend on what the E51 runs afterwards. The libraries only
+define `u54_1()`. The other harts run the application's `e51()` /
+`u54_2..4()` or, without them, the HAL's weak defaults, whose `park_hart()`
+jumps to the boot-ROM park loop at `0x20003120` in eNVM. That suits a board
+programmed with HSS; in Renode (empty eNVM) define your own, as the demo does
+in `examples/freertos-demo/other_harts.c` (UART0 banner on the E51, then WFI).
 
-## 4. U54_1 M-mode set-up (`u54_1.c`)
+## 4. U54_1 M-mode set-up (`u54_1()` in `src/smode/u54_1_boot.c`)
 
-Everything that needs `mhartid` or the M-mode PLIC context is done here,
-because S-mode cannot read `mhartid` and the HAL helpers use it. All of it runs
-from the physical copy of L2LIM, so addresses taken here (`smode_start`,
-`g_s_boot_stack`) are physical, which is what `mret` and the first S-mode
-instructions need.
+The library does only what the S-mode kernel needs; everything else that needs
+`mhartid` or M-mode (clocks, resets, UARTs, GPIO interrupt enables...) goes in
+the application's `smode_m_prehook()`, because S-mode cannot read `mhartid`
+and the HAL helpers use it. All of it runs from the physical copy of L2LIM,
+so addresses taken here (`smode_start`, `g_s_boot_stack`) are physical, which
+is what `mret` and the first S-mode instructions need.
 
 ```mermaid
 flowchart TD
-    A(["u54_1() — M-mode<br/>sp = __app_stack_top_h1"]) --> B["clear_soft_interrupt<br/>mie = MSIP<br/>g_u54_1_waiting_for_release = 1"]
-    B --> C["wfi until mip.MSIP"]
-    C --> D["clear_soft_interrupt<br/>mie = 0"]
+    A(["u54_1() — M-mode, library<br/>sp = __app_stack_top_h1"]) --> D["clear_soft_interrupt<br/>mstatus.MIE = 0, mie = 0"]
 
     D --> P1
-    subgraph PLAT ["m_mode_platform_init()"]
+    subgraph PLAT ["smode_m_prehook() — application (weak, empty by default); the demo's:"]
         P1["mss_config_clk_rst:<br/>MMUART1, GPIO2, CFM on"] --> P2["MSS_UART_init(UART1, 115200 8N1)<br/>print [M] banner"]
         P2 --> P3["SYSREG->GPIO_INTERRUPT_FAB_CR = all ones<br/>(GPIO2 → PLIC)"]
         P3 --> P4["MSS_GPIO_init(GPIO2)<br/>16..19, 26..28 out; 30, 31 in, level-high IRQ"]
@@ -172,15 +166,18 @@ flowchart TD
     end
 
     P5 --> Q1
-    subgraph PLICS ["m_mode_plic_init_for_smode()"]
-        Q1["SPLIC_disable_all<br/>(M and S contexts of hart 1)"] --> Q2["for 43, 44, 118:<br/>priority = 2<br/>disable in M-context<br/>enable in S-context"]
-        Q2 --> Q3["S-context threshold = 0"]
+    subgraph PLICS ["m_mode_plic_init_for_smode() — library"]
+        Q1["SPLIC_disable_all<br/>(M and S contexts of hart 1)"] --> Q3["S-context threshold = 0"]
         Q3 --> Q4["drain: claim/complete until 0"]
     end
 
-    Q4 --> R["print [M] delegating ... entering S-mode"]
-    R --> S(["m_shim_enter_smode(smode_start,<br/>&g_s_boot_stack[4096])<br/>both physical"])
+    Q4 --> S(["m_shim_enter_smode(smode_start,<br/>&g_s_boot_stack[4096])<br/>both physical"])
 ```
+
+Interrupt sources are enabled for the S context by the application, from
+S-mode, in `s_mode_main()` (`PLIC_SetPriority()` + `SPLIC_enable()`; the demo
+enables 43, 44 and 118). They are not taken before the scheduler starts,
+because `sstatus.SIE` is 0 until then.
 
 ## 5. The handover: `m_shim_enter_smode()`
 
@@ -359,8 +356,8 @@ sequenceDiagram
     SS->>SS: jr (label + a1): pc now virtual
     SS->>SS: la gp, __global_pointer$ (pc-relative, so virtual)
     SS->>SS: stvec = smode_early_trap (virtual)
-    SS->>SS: call s_mode_main
-    Note over SS: s_mode_main sets stvec = freertos_risc_v_trap_handler
+    SS->>SS: call smode_os_init (stvec = freertos_risc_v_trap_handler)
+    SS->>SS: call s_mode_main (application)
 ```
 
 On Renode the console then shows, for example,
@@ -407,8 +404,9 @@ Consequences:
   `SBI_SHIM_READ_PHYS_U64` takes a physical address and only accepts the DDR
   window.
 * **Faults during the switch** go to `smode_early_trap`, which is position
-  independent and reports `scause`/`sepc`/`stval` on UART1 through
-  `smode_early_trap_report()` (`smode_irq.c`), then parks.
+  independent and reports `scause`/`sepc`/`stval` through
+  `smode_early_trap_report()` → `smode_diag_puts()` (`src/smode/smode_diag.c`;
+  UART1 in the demo), then parks.
 
 ## 7. Privilege levels on U54_1
 
@@ -439,9 +437,10 @@ sequenceDiagram
     participant M as M-mode shim (M, physical)
     participant CLINT as CLINT mtime / mtimecmp[1]
 
-    Note over S: entered from smode_start at the virtual alias, SIE = 0
-    S->>S: stvec = freertos_risc_v_trap_handler (virtual)
-    S->>S: create queue, mutex, 4 tasks
+    Note over S: smode_start → smode_os_init: stvec = freertos_risc_v_trap_handler (virtual)
+    Note over S: s_mode_main entered at the virtual alias, SIE = 0
+    S->>S: demo: enable PLIC 43/44/118 for the S context
+    S->>S: create queue, mutex, tasks
     S->>S: vTaskStartScheduler → xPortStartScheduler
     S->>CLINT: read mtime (0x0200BFF8 via identity gigapage, PMP allows it)
     S->>M: ecall a7 = TIME, a6 = set_timer, a0 = mtime + 1000
@@ -471,12 +470,12 @@ Other trap paths after the handover:
   directly. Either way SSIP is delegated and taken as scause 1 by the port,
   which clears it and switches context. See `src/middleware/README.md`
   section 3.2 for why Renode needs the M-mode write.
-* **PLIC** – sources 43/44/118 assert SEIP on hart 1's S-context; delegated,
-  `smode_irq.c` claims/completes on the S-context and calls the HAL handler
+* **PLIC** – sources the application enabled (demo: 43/44/118) assert SEIP
+  on hart 1's S-context; delegated, `src/freertos_glue/smode_irq.c` claims/completes on the S-context and calls the HAL handler
   table entries.
 * **Exceptions** – delegated faults, including page faults, go to
   `freertos_risc_v_application_exception_handler` (`smode_irq.c`), which
-  records `g_smode_fault`. Before FreeRTOS installs its handler they go to
+  records `g_smode_fault` and reports through `smode_diag_puts()`. Before FreeRTOS installs its handler they go to
   `smode_early_trap`. Breakpoints stay in M-mode for the debugger.
 
 ## 9. Memory used during the handover
@@ -507,7 +506,8 @@ Other trap paths after the handover:
   there is a single address space, so tasks share it and context switches
   never touch `satp`.
 * **Loading the image.** The ELF entry point is virtual
-  (`0xFFFFFFC0_08000000`); the SoftConsole launcher loads it with gdb and
+  (`0xFFFFFFC0_08000000`); the SoftConsole launcher loads
+  `build/examples/freertos-demo/freertos-demo.elf` with gdb and
   sets every hart's `pc` to the physical `0x08000000`. A monitor-only flow
   can use `sysbus LoadELF` (it loads at the physical addresses) followed by
   `sysbus.<hart> PC 0x08000000` for each hart. The DDR buffers are linker

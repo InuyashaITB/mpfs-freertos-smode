@@ -12,7 +12,7 @@
  *   TIME   (0x54494D45)  set_timer
  *   IPI    (0x735049)    send_ipi, to the calling hart only (sets SSIP)
  *   legacy (0x00)        set_timer
- *   legacy (0x01)        console_putchar (to MMUART1, polled)
+ *   legacy (0x01)        console_putchar (to smode_diag_puts())
  *   SHIM   (0x0A000000)  read_phys_u64 - debug: read a physical qword in the
  *                        38-bit cached DDR window (firmware-specific range)
  */

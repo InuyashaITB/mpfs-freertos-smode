@@ -2,9 +2,13 @@
 A U54 RISCV FreeRTOS Port to work in S-Mode
 
 FreeRTOS (Kernel V11.3.2) running in **supervisor mode** on one PolarFire SoC
-U54 core (U54_1), with the E51 and U54_2..4 parked. Built from the
-`mpfs-gpio-interrupt` example (same HAL 2.0.102, drivers, board files and
-build configurations) and meant to run in Renode from SoftConsole v2022.2.
+U54 core (U54_1). Built from the `mpfs-gpio-interrupt` example (same HAL
+2.0.102, drivers and board files) and meant to run in Renode from SoftConsole
+v2022.2.
+
+Everything up to the application's `s_mode_main()` is packaged as **static
+libraries** built with CMake; the demo is a separate application project
+that links them. See [Libraries and applications](#libraries-and-applications).
 
 **Branch `mmu-sv39`:** the S-mode kernel runs with the **Sv39 MMU on**, from
 virtual addresses in the upper half of the address space, and owns 3 GiB of
@@ -16,24 +20,25 @@ Diagrams of the full sequence (reset, MMU/PMP configuration, S-mode handover,
 first tick) are in [`docs/boot-to-smode.md`](docs/boot-to-smode.md).
 
 ```
-reset, all harts ─► mss_entry.S (M-mode, HAL)
-  E51  ─► main_first_hart: HW init, wakes harts 1..4 ─► e51():
-            prints on UART0, raise_soft_interrupt(1), park (WFI forever)
-  U54_2..4 ─► u54_N(): park (WFI forever, interrupts off)
-  U54_1 ─► u54_1()  [M-mode, hart1/u54_1.c]
-            wait for E51's software interrupt
-            clocks/resets, MMUART1 + GPIO2 init, GPIO2 → PLIC routing
-            PLIC: sources 43/44/118 → hart1 *S* context, threshold 0
-            m_shim_enter_smode()  [smode/m_shim.c]
+reset, all harts ─► mss_entry.S (M-mode, HAL)                    [lib boot]
+  E51  ─► main_first_hart: HW init, wakes harts 1..4 ─► e51()     [app or HAL weak]
+  U54_2..4 ─► u54_N()                                             [app or HAL weak]
+  U54_1 ─► u54_1()  [M-mode, src/smode/u54_1_boot.c]              [lib boot]
+            smode_m_prehook()                                     [app, weak]
+              demo: clocks/resets, MMUART1 + GPIO2 init, GPIO2 → PLIC routing
+            PLIC hart1: all sources off (M and S), S threshold 0
+            m_shim_enter_smode()  [src/smode/m_shim.c]
               mideleg = SSIP|STIP|SEIP, medeleg = faults/illegal/misaligned
               PMP entry 0 = whole space RWX, satp = 0
               mtvec = m_shim_trap_vector (own M stack via mscratch)
-              mret ─► smode_start  [S-mode, MMU off, physical PC; smode/smode_start.S]
-                        sv39_build(): gigapage root table  [smode/sv39.c]
+              mret ─► smode_start  [S-mode, MMU off, physical PC; src/smode/smode_start.S]
+                        sv39_build(): gigapage root table  [src/smode/sv39.c]
                         satp = Sv39, jump to the high (virtual) alias, gp/sp too
-                        s_mode_main()  [virtual PC; hart1/app_main.c]
+                        smode_os_init()                           [lib freertos]
                           stvec = freertos_risc_v_trap_handler
-                          create tasks, vTaskStartScheduler()
+                        s_mode_main()  [virtual PC, SIE = 0]      [app]
+                          demo: PLIC 43/44/118 → S context, create tasks,
+                          vTaskStartScheduler()
 ```
 
 After the handoff, M-mode on U54_1 only runs for traps from S-mode:
@@ -49,33 +54,149 @@ After the handoff, M-mode on U54_1 only runs for traps from S-mode:
   FreeRTOS yield while `configPORT_YIELD_VIA_SBI_IPI = 1`, the default here
   because Renode 1.13 ignores S-mode writes to `sip` (see
   `src/middleware/README.md` section 3.2). Set it to 0 on hardware.
-* Anything else: printed on UART1 as `*** M-mode shim: unhandled trap ...`
-  and the hart is parked.
+* Anything else: reported through `smode_diag_puts()` (UART1 in the demo) as
+  `*** M-mode shim: unhandled trap ...` and the hart is parked.
+
+## Libraries and applications
+
+| Library | Contents |
+|---|---|
+| `libmpfs_smode_boot.a` | MPFS HAL (start-up, `mss_entry.S`, PLIC/CLINT/PMP/L2, NWC), `u54_1()`, M-mode SBI shim, Sv39 bring-up, `smode_start`, diagnostics (`src/platform/mpfs_hal`, `src/platform/hal`, `src/smode`) |
+| `libfreertos_smode.a` | FreeRTOS kernel, `heap_4`, the S-mode port, PLIC dispatch / fault reporting / FreeRTOS hooks, `smode_os_init()` (`src/middleware/FreeRTOS-Kernel`, `src/freertos_glue`). Compiled against the `FreeRTOSConfig.h` in `FREERTOS_CONFIG_DIR` |
+| `libmpfs_drivers.a` | MSS drivers named in `MPFS_DRIVERS` (default `mss_mmuart;mss_gpio`), for applications. The two libraries above do not use them |
+
+The libraries only handle **U54_1**. They define `u54_1()` and nothing for
+the E51 or U54_2..4: those run the application's `e51()` / `u54_2()` ..
+`u54_4()`, or the HAL's weak defaults (`park_hart()`, which jumps to the
+boot-ROM park loop at `0x20003120` in eNVM; on Renode, with an empty eNVM,
+define your own, as `examples/freertos-demo/other_harts.c` does).
+
+### Application interface (`smode/mpfs_smode.h`)
+
+| Symbol | Provided by | When / how |
+|---|---|---|
+| `void s_mode_main(void)` | application, **required** | S-mode, Sv39 on, virtual PC, `stvec` = FreeRTOS handler, `sstatus.SIE = 0`, 4 KiB boot stack. Enable PLIC sources (`PLIC_SetPriority()` + `SPLIC_enable()`), create tasks, `vTaskStartScheduler()`. Do not set `SIE` before the scheduler starts |
+| `void smode_m_prehook(void)` | application, optional (weak) | M-mode on U54_1, MMU off (physical PC), before the PLIC S-context set-up and the drop to S-mode. Anything needing M-mode or `mhartid`: `mss_config_clk_rst()`, UART init, `MSS_GPIO_enable_irq()`... |
+| `void smode_diag_puts(const char *)` | application, optional (weak, default discards) | Fault, assert and shim reports and SBI `console_putchar`. Called from M- and S-mode with interrupts off: keep it polled |
+| `vAssertCalled`, `vApplicationMallocFailedHook`, `vApplicationStackOverflowHook` | library (weak) | Report via `smode_diag_puts()` and park; override if needed |
+| `vSmodeYieldFromISR()`, `g_smode_ext_irqs` | library (`smode/smode_irq.h`) | from PLIC handlers |
+| `SPLIC_*` (`smode/smode_plic.h`), `sbi_*` (`smode/sbi.h`), `sv39_get_layout()` (`smode/sv39.h`), `g_m_shim_*` (`smode/m_shim.h`), `g_smode_fault` | library | helpers and debug records |
+
+PLIC handlers keep the HAL's names (e.g.
+`gpio1_bit16_or_gpio2_bit30_plic_30_IRQHandler`) and are dispatched from the
+S context by `src/freertos_glue/smode_irq.c`.
+
+Code that runs in M-mode (`smode_m_prehook()`, anything it calls) must be
+built with the library's compile options; linking `MpfsSmode::mpfs_smode`
+applies them (see [How one image runs both physical and
+virtual](#how-one-image-runs-both-physical-m-mode-and-virtual-s-mode)).
+
+### Building
+
+Requirements: CMake ≥ 3.24 and a RISC-V bare-metal GCC with newlib-nano
+(SoftConsole's `riscv64-unknown-elf-gcc` on `PATH`).
+
+```sh
+make                        # = cmake -B build ... && cmake --build build
+make install PREFIX=dist    # dist/lib/*.a, dist/include, dist/lib/ldscripts, dist/lib/cmake/MpfsSmode
+```
+
+or with CMake directly:
+
+```sh
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/riscv64-unknown-elf.cmake
+cmake --build build
+cmake --install build --prefix dist
+```
+
+Outputs: `build/libmpfs_smode_boot.a`, `build/libfreertos_smode.a`,
+`build/libmpfs_drivers.a` and the demo
+`build/examples/freertos-demo/freertos-demo.elf` (+ `.hex`, `.map`).
+
+| CMake cache variable | Default | |
+|---|---|---|
+| `CMAKE_BUILD_TYPE` | `Debug` (`-O0 -g3`) | or `Release` (`-Os`) |
+| `RISCV_TOOLCHAIN_PREFIX` | `riscv64-unknown-elf-` | may include a directory |
+| `RISCV_LIBC_SPECS` / `RISCV_LIBC_LINK_SPECS` | `--specs=nano.specs` / `--specs=nosys.specs` | for a picolibc toolchain: `--specs=picolibc.specs` / empty |
+| `FREERTOS_CONFIG_DIR` | `examples/freertos-demo` | `FreeRTOSConfig.h` that `libfreertos_smode` is built against (and installs) |
+| `MPFS_BOARD_DIR` | `src/boards/icicle-kit-es` | board configuration headers |
+| `MPFS_LINKER_SCRIPT` | `<board>/platform_config/linker/mpfs-lim-sv39.ld` | installed with the libraries |
+| `MPFS_DRIVERS` | `mss_mmuart;mss_gpio` | drivers in `libmpfs_drivers` |
+| `MPFS_SMODE_BUILD_EXAMPLE` | `ON` | build `examples/freertos-demo` |
+
+Compile options applied to the libraries and to every application:
+`-march=rv64gc -mabi=lp64d -mcmodel=medany -mstrict-align -fno-jump-tables
+-ffunction-sections -fdata-sections` (plus `_zicsr_zifencei` on GCC ≥ 12);
+link: `-nostartfiles -Wl,--gc-sections -T mpfs-lim-sv39.ld`.
+
+### Writing an application
+
+```cmake
+cmake_minimum_required(VERSION 3.24)
+project(my_app C ASM)
+find_package(MpfsSmode REQUIRED)        # -DCMAKE_PREFIX_PATH=<install prefix>
+add_executable(my_app main.c)
+set_target_properties(my_app PROPERTIES SUFFIX ".elf")
+target_link_libraries(my_app PRIVATE MpfsSmode::mpfs_smode MpfsSmode::mpfs_drivers)
+```
+
+Configure it with the installed toolchain file:
+`cmake -B build -DCMAKE_TOOLCHAIN_FILE=<prefix>/lib/cmake/MpfsSmode/riscv64-unknown-elf.cmake -DCMAKE_PREFIX_PATH=<prefix>`.
+
+```c
+#include "FreeRTOS.h"
+#include "task.h"
+#include "smode/mpfs_smode.h"
+
+void s_mode_main(void)          /* S-mode, MMU on, FreeRTOS trap handler installed */
+{
+    xTaskCreate(vMyTask, "my", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+    vTaskStartScheduler();
+    for (;;) { }
+}
+```
+
+`MpfsSmode::mpfs_smode` links both libraries with `--whole-archive`: weak
+defaults (the HAL's `u54_1()`, the boot library's `smode_os_init()`) live in
+archive members that are always loaded, so without it the strong definitions
+would never be pulled in. `--gc-sections` removes what is unused. To use another
+linker script, set `MPFS_SMODE_LINKER_SCRIPT` before `find_package()`.
+
+`FreeRTOSConfig.h` is baked into `libfreertos_smode.a`. The installed copy
+(`<prefix>/include/freertos/FreeRTOSConfig.h`, next to `FreeRTOS.h`) is the
+one applications compile against. To change it, rebuild the library with
+`-DFREERTOS_CONFIG_DIR=<dir with your FreeRTOSConfig.h>`.
+`configPORT_YIELD_VIA_SBI_IPI` / `configSBI_HART_ID` must stay consistent
+with `SMODE_HART` (checked at build time).
 
 ## Files added or changed vs. mpfs-gpio-interrupt
 
 | File | What |
 |---|---|
+| `CMakeLists.txt`, `cmake/` | Library build, install and CMake package (`find_package(MpfsSmode)`); toolchain file |
+| `Makefile` | Wrapper around the CMake build (command line and SoftConsole) |
+| `src/smode/mpfs_smode.h` | Public application interface of the libraries |
+| `src/smode/u54_1_boot.c` | `u54_1()`: pre-hook, PLIC S-context clean slate, handoff |
+| `src/smode/m_shim.*`, `m_shim_trap.S` | M-mode shim: handoff, SBI timer/IPI, MTIP→STIP |
+| `src/smode/smode_diag.c` | Weak `smode_diag_puts()` / `smode_m_prehook()` / `smode_os_init()`, fault reports |
+| `src/smode/smode_plic.h` | PLIC helpers for the hart's S context (no `mhartid`) |
+| `src/smode/sbi.h` | SBI IDs + `sbi_call()` for S-mode code |
+| `src/smode/sv39.*` | *(mmu-sv39)* Gigapage root table from the linker layout |
+| `src/smode/smode_start.S` | *(mmu-sv39)* S-mode entry: satp on, jump to the virtual alias, `smode_os_init()`, `s_mode_main()` |
+| `src/smode/smode_irq.h`, `src/freertos_glue/smode_irq.c` | S-mode PLIC dispatch, exception/assert/stack-overflow reports, `smode_os_init()` |
 | `src/middleware/FreeRTOS-Kernel/` | Kernel V11.3.2 (core files, `include/`, `MemMang/heap_4.c`) |
 | `.../portable/GCC/RISC-V-SMode/` | The S-mode port (see its README.md) |
 | `src/middleware/README.md` | Deviations from the upstream FreeRTOS RISC-V port, M-mode vs S-mode |
-| `src/application/FreeRTOSConfig.h` | 1 kHz tick, mtime 1 MHz @ 0x0200BFF8, FPU context on, 32 KB heap |
-| `src/application/smode/m_shim.*`, `m_shim_trap.S` | M-mode shim: handoff, SBI timer, MTIP→STIP |
-| `src/application/smode/smode_plic.h` | PLIC helpers for the hart's S context (no `mhartid`) |
-| `src/application/smode/smode_irq.*` | S-mode PLIC dispatch, exception/assert/stack-overflow reports |
-| `src/application/smode/sbi.h` | SBI IDs + `sbi_call()` for S-mode code |
-| `src/application/smode/sv39.*` | *(mmu-sv39)* Gigapage root table from the linker layout |
-| `src/application/smode/smode_start.S` | *(mmu-sv39)* S-mode entry: satp on, jump to the virtual alias, early trap report |
-| `src/application/ddr/ddr_buffers.*` | *(mmu-sv39)* 3 x 1 GiB `char[]` buffers + `g_ddr_buffer[]` pointer table |
 | `src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld` | *(mmu-sv39)* Linker script with physical/virtual regions |
-| `renode/mpfs-ddr-38bit-cached-3gib.repl` | *(mmu-sv39)* Adds 2 GiB of DDR to Renode's platform |
-| `src/application/hart1/u54_1.c` | M-mode set-up + handoff (replaces the bare-metal demo) |
-| `src/application/hart1/app_main.c` | S-mode FreeRTOS demo tasks (console, blink, spin, heartbeat; *mmu-sv39*: ddr, and spin plays "DDR Life" in DDR) and PLIC handlers |
-| `src/application/hart0/e51.c`, `hart2..4/u54_N.c` | Park the other harts |
-| `src/application/inc/hart_park.h` | `park_this_hart()` |
 | `src/boards/icicle-kit-es/platform_config/mpfs_hal_config/mss_sw_config.h` | `DDR_SUPPORT` commented out (Renode start-up; image runs from L2LIM) |
-| `.cproject` | Two include paths added to every configuration: `FreeRTOS-Kernel/include`, `.../RISC-V-SMode`. *(mmu-sv39)* `-fno-jump-tables`; LIM configs use `mpfs-lim-sv39.ld` |
-| `*.launch` | The two Renode launchers, renamed for this project. *(mmu-sv39)* PC = `0x08000000`, stop at `s_mode_main`, load the DDR repl |
+| `examples/freertos-demo/` | The demo application: `CMakeLists.txt`, `FreeRTOSConfig.h` (1 kHz tick, mtime 1 MHz @ 0x0200BFF8, FPU context on, 32 KB heap) |
+| `examples/freertos-demo/app_main.c` | `s_mode_main()`: PLIC sources, demo tasks (console, blink, spin "DDR Life", ddr, heartbeat) and PLIC handlers |
+| `examples/freertos-demo/m_prehook.c` | `smode_m_prehook()`: MMUART1, GPIO2, GPIO→PLIC routing; `smode_diag_puts()` on MMUART1 |
+| `examples/freertos-demo/other_harts.c` | `e51()` (UART0 banner) and `u54_2..4()`: park in WFI |
+| `examples/freertos-demo/ddr_buffers.*` | *(mmu-sv39)* 3 x 1 GiB `char[]` buffers + `g_ddr_buffer[]` pointer table |
+| `renode/mpfs-ddr-38bit-cached-3gib.repl` | *(mmu-sv39)* Adds 2 GiB of DDR to Renode's platform |
+| `.cproject` | One configuration (LIM-Debug), Makefile project calling the top-level `Makefile`; include paths kept for the indexer |
+| `*.launch` | The two Renode launchers, renamed for this project. *(mmu-sv39)* PC = `0x08000000`, stop at `s_mode_main`, load the DDR repl; ELF = `build/examples/freertos-demo/freertos-demo.elf` |
 
 `src/application/inc/common.h` from the example was removed (unused).
 
@@ -83,7 +204,10 @@ After the handoff, M-mode on U54_1 only runs for traps from S-mode:
 
 1. Import: *File → Import → General → Existing Projects into Workspace*, select
    this folder (or copy it next to the other examples first).
-2. Select the **LIM-Debug** build configuration and build.
+2. Build the project (*Project → Build*). It runs `make` in the project
+   folder, i.e. the CMake build into `build/`. CMake ≥ 3.24 must be on the
+   `PATH` SoftConsole uses, as well as `riscv64-unknown-elf-gcc`. (Or run
+   `make` in a shell.)
 3. Run the launch group **mpfs-freertos-smode Renode All-harts
    Start-platform-and-debug**. It adds 2 GiB of DDR to the Renode platform
    (`renode/mpfs-ddr-38bit-cached-3gib.repl`), starts all harts at the
@@ -95,8 +219,8 @@ Expected on UART1:
 
 ```
 **** PolarFire SoC: FreeRTOS in S-mode on U54_1 ****
-[M] u54_1 released, configuring peripherals and PLIC S-context
-[M] delegating SSIP/STIP/SEIP, PMP open, entering S-mode...
+[M] u54_1 released, configuring peripherals
+[M] pre-hook done, library sets up the PLIC S-context and enters S-mode...
 [S] s_mode_main: sstatus=0x...6000 (SPP/SIE clear, FS on)
 [S] Sv39 on: satp=0x80000000000080xx, running at 0xffffffc0080xxxxx (s_mode_main)
 [S]   L2LIM VA 0xffffffc008000000 -> PA 0x8000000
@@ -187,14 +311,15 @@ never land inside it. That is the only time `spin` can block.
   read `sstatus`, `sepc`, `scause`, `stval`. The machine CSRs are still
   readable from gdb (the debugger has M-mode access).
 * Fault records for the debugger: `g_smode_fault` (S-mode exceptions),
-  `g_m_shim_fault` (unexpected M-mode traps), `g_hart_parked[]`.
+  `g_m_shim_fault` (unexpected M-mode traps), `g_hart_parked[]` (demo).
+* The libraries are built with full debug info (`Debug`), so their sources
+  are visible in the debugger as long as the paths in the `.a` resolve.
 * Breakpoint exceptions are deliberately not delegated to S-mode.
 * Symbols are virtual addresses. Breakpoints in S-mode code work normally
   once the MMU is on. M-mode code (HAL start-up, `u54_1()`, the shim) runs
   from the physical copy, so its breakpoints must be physical: load a second
   copy of the symbols shifted down, e.g. in the gdb console
-  `add-symbol-file Debug/mpfs-freertos-smode.elf -o -0xffffffc000000000`
-  (path as built by your configuration), or use `break *0x0800xxxx`.
+  `add-symbol-file build/examples/freertos-demo/freertos-demo.elf -o -0xffffffc000000000`, or use `break *0x0800xxxx`.
 * Renode macros from `macros.resc` work as before, e.g. `runMacro $MCsrU54_1`.
 * If `vTaskDelay()` returns immediately, or the hart spins in
   `vListInsert()` with `xTickCount` stuck, the yield is not being taken:
@@ -212,11 +337,11 @@ never land inside it. That is the only time `spin` can block.
   OpenSBI's next stage; the port is unchanged (it only uses the standard
   SBI TIME extension).
 * Only U54_1 is used. `SMODE_HART` in `smode_plic.h` and the hart-specific
-  bits in `u54_1.c` would need changing to move it.
+  bits in `u54_1_boot.c` would need changing to move it.
 * Code in S-mode must not call HAL functions that read `mhartid` (PLIC
   helpers, `mss_config_clk_rst()`, `MSS_GPIO_enable_irq()`, `SysTick_Config()`
-  ...). Do that set-up in `u54_1()` before the handoff, or add S-mode
-  variants like `smode_plic.h`.
+  ...). Do that set-up in `smode_m_prehook()` before the handoff, or add
+  S-mode variants like `smode_plic.h`.
 
 ## Sv39 MMU (branch `mmu-sv39`)
 
@@ -233,11 +358,12 @@ and G set. `ORIGIN(ddr_cached_38bit_va) - ORIGIN(l2lim_va)` = 896 MiB.
 
 ### Linker script
 
-`src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld` (used by
-LIM-Debug and LIM-Release) has a physical and a virtual region for L2LIM and
+`src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld` (installed
+with the libraries and used for every application) has a physical and a virtual region for L2LIM and
 for the DDR window. Every section is `> xxx_va AT> xxx_pa`. The DDR buffers
 are not a section at all: `g_ddr_buffer_0..2` are absolute symbols at
-`ORIGIN(ddr_cached_38bit_va)` + 0, 1 and 2 GiB (see below). ASSERTs check the
+`ORIGIN(ddr_cached_38bit_va)` + 0, 1 and 2 GiB (see below); they cost nothing
+in applications that do not use them. ASSERTs check the
 gigapage alignment, the "DDR within 1 GiB of L2LIM" rule, and that every
 loaded section has `VMA - LMA == ONCHIP_VA_OFFSET`.
 
@@ -249,7 +375,8 @@ run the same code from the physical copy. That works because:
 * `-mcmodel=medany` code finds every symbol PC-relatively, and the entire
   on-chip gigapage is aliased with a single offset, so the distances are
   the same in both views.
-* **`-fno-jump-tables`** (added to the compiler flags). Otherwise `switch`
+* **`-fno-jump-tables`** (in the compile options of the libraries and of
+  every application linking `MpfsSmode::mpfs_smode`). Otherwise `switch`
   statements compile to tables of absolute (virtual) addresses, which crash
   in M-mode. The HAL's `main_other_hart()` was the first to hit this.
 * Symbols the linker defines for copy loops (`__sc_load`, `__data_load`, ...)
@@ -268,8 +395,8 @@ Still true and worth knowing:
 ### DDR buffers
 
 The linker script defines `g_ddr_buffer_0..2` as absolute symbols, 1 GiB
-apart from `ORIGIN(ddr_cached_38bit_va)`, and `src/application/ddr/ddr_buffers.c`
-declares them `extern char[]`. They are deliberately **not** an output
+apart from `ORIGIN(ddr_cached_38bit_va)`, and
+`examples/freertos-demo/ddr_buffers.c` declares them `extern char[]`. They are deliberately **not** an output
 section: even a `NOLOAD` section is still *allocated*, so the linker gives it
 a `PT_LOAD` program header with `MemSiz` = 3 GiB. `size` then reports 3 GiB of
 bss, loaders that clear BSS segments would try to zero it, and Renode 1.13's
@@ -300,6 +427,7 @@ Icicle Kit has 2 GiB) and matching DDR segment (SEG) settings.
 
 ### Not supported on this branch
 
-The `eNVM-Scratchpad-Release` and `DDR-Release` configurations still use
-the HAL's physical linker scripts and do not link (the MMU code needs the
-symbols from `mpfs-lim-sv39.ld`).
+Only the LIM (L2LIM, Sv39) layout is built. The HAL's eNVM-scratchpad and DDR
+linker scripts are physical-only and lack the symbols the MMU code needs, so
+the former `eNVM-Scratchpad-Release` / `DDR-Release` configurations were
+dropped with the SoftConsole managed build.

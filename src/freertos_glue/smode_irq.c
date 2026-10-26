@@ -15,12 +15,15 @@
  * mhartid (PLIC_*, mss_config_clk_rst(), MSS_GPIO_enable_irq(), ...).
  * To unblock a task from a handler use the FromISR API and pass the
  * "higher priority task woken" result to vSmodeYieldFromISR().
+ *
+ * Also provides smode_os_init() (installs the FreeRTOS trap handler before
+ * the boot code calls s_mode_main()) and weak defaults for the FreeRTOS
+ * hooks the configuration needs; reports go to smode_diag_puts().
  */
 
 #include "FreeRTOS.h"
 #include "task.h"
 #include "mpfs_hal/mss_hal.h"
-#include "drivers/mss/mss_mmuart/mss_uart.h"
 #include "smode/smode_plic.h"
 #include "smode/smode_irq.h"
 
@@ -33,7 +36,6 @@ extern uint8_t (*ext_irq_handler_table[PLIC_NUM_SOURCES])(void);
 
 static BaseType_t xYieldRequired = pdFALSE;
 
-volatile smode_fault_t g_smode_fault;
 volatile uint64_t g_smode_ext_irqs = 0U;
 
 void vSmodeYieldFromISR(BaseType_t xHigherPriorityTaskWoken)
@@ -44,43 +46,6 @@ void vSmodeYieldFromISR(BaseType_t xHigherPriorityTaskWoken)
     }
 }
 
-/*------------------------------------------------------------------------------
- * Polled output (safe with interrupts disabled).
- */
-static void prvPuts(const char *s)
-{
-    MSS_UART_polled_tx_string(&g_mss_uart1_lo, (const uint8_t *)s);
-}
-
-static void prvPutHex(uintptr_t v)
-{
-    char buf[19];
-    static const char hex[] = "0123456789abcdef";
-
-    buf[0] = '0';
-    buf[1] = 'x';
-    for (int i = 0; i < 16; i++)
-    {
-        buf[2 + i] = hex[(v >> (60 - (4 * i))) & 0xFU];
-    }
-    buf[18] = '\0';
-    prvPuts(buf);
-}
-
-static void prvPutDec(unsigned long v)
-{
-    char buf[21];
-    int i = 20;
-
-    buf[i] = '\0';
-    do
-    {
-        buf[--i] = (char)('0' + (v % 10U));
-        v /= 10U;
-    } while ((v != 0U) && (i > 0));
-    prvPuts(&buf[i]);
-}
-
 static void prvHalt(void) __attribute__((noreturn));
 static void prvHalt(void)
 {
@@ -89,6 +54,17 @@ static void prvHalt(void)
     {
         __asm volatile ("wfi");
     }
+}
+
+/*------------------------------------------------------------------------------
+ * OS hook, called by smode_start.S right before s_mode_main()
+ */
+extern void freertos_risc_v_trap_handler(void);
+
+void smode_os_init(void)
+{
+    /* Install the FreeRTOS trap handler (direct mode). */
+    __asm volatile ("csrw stvec, %0" :: "r"((uintptr_t)&freertos_risc_v_trap_handler));
 }
 
 /*------------------------------------------------------------------------------
@@ -140,77 +116,42 @@ void freertos_risc_v_application_interrupt_handler(uintptr_t scause, uintptr_t s
     }
 
     /* Unexpected supervisor interrupt (nothing else is enabled in sie). */
-    g_smode_fault.scause = scause;
-    g_smode_fault.sepc = sepc;
-    g_smode_fault.stval = 0U;
-    prvPuts("\r\n*** S-mode: unexpected interrupt scause=");
-    prvPutHex(scause);
-    prvPuts("\r\n");
-    prvHalt();
+    smode_fatal("S-mode: unexpected interrupt", scause, sepc, 0U);
 }
 
 void freertos_risc_v_application_exception_handler(uintptr_t scause, uintptr_t sepc_plus_4)
 {
-    g_smode_fault.scause = scause;
-    g_smode_fault.sepc = sepc_plus_4 - 4U;
-    __asm volatile ("csrr %0, stval" : "=r"(g_smode_fault.stval));
-    __asm volatile ("csrr %0, sstatus" : "=r"(g_smode_fault.sstatus));
+    uintptr_t stval;
 
-    prvPuts("\r\n*** S-mode exception scause=");
-    prvPutHex(g_smode_fault.scause);
-    prvPuts(" sepc=");
-    prvPutHex(g_smode_fault.sepc);
-    prvPuts(" stval=");
-    prvPutHex(g_smode_fault.stval);
-    prvPuts(" sstatus=");
-    prvPutHex(g_smode_fault.sstatus);
-    prvPuts("\r\n");
-    prvHalt();
-}
-
-/* Called from smode_start.S before FreeRTOS installs its trap handler, with
- * the MMU either still off or just switched on. */
-void smode_early_trap_report(uintptr_t scause, uintptr_t sepc, uintptr_t stval)
-{
-    g_smode_fault.scause = scause;
-    g_smode_fault.sepc = sepc;
-    g_smode_fault.stval = stval;
-
-    prvPuts("\r\n*** S-mode early trap (MMU bring-up) scause=");
-    prvPutHex(scause);
-    prvPuts(" sepc=");
-    prvPutHex(sepc);
-    prvPuts(" stval=");
-    prvPutHex(stval);
-    prvPuts("\r\n");
-    prvHalt();
+    __asm volatile ("csrr %0, stval" : "=r"(stval));
+    smode_fatal("S-mode exception", scause, sepc_plus_4 - 4U, stval);
 }
 
 /*------------------------------------------------------------------------------
- * FreeRTOS hooks
+ * FreeRTOS hooks. Weak, so the application can replace them.
  */
-void vAssertCalled(const char *pcFile, unsigned long ulLine)
+__attribute__((weak)) void vAssertCalled(const char *pcFile, unsigned long ulLine)
 {
     portDISABLE_INTERRUPTS();
-    prvPuts("\r\n*** configASSERT failed: ");
-    prvPuts(pcFile);
-    prvPuts(":");
-    prvPutDec(ulLine);
-    prvPuts("\r\n");
+    smode_diag_puts("\r\n*** configASSERT failed: ");
+    smode_diag_puts(pcFile);
+    smode_diag_puts(":");
+    smode_diag_putdec(ulLine);
+    smode_diag_puts("\r\n");
     prvHalt();
 }
 
-void vApplicationMallocFailedHook(void)
+__attribute__((weak)) void vApplicationMallocFailedHook(void)
 {
-    prvPuts("\r\n*** FreeRTOS heap exhausted (configTOTAL_HEAP_SIZE)\r\n");
+    smode_diag_puts("\r\n*** FreeRTOS heap exhausted (configTOTAL_HEAP_SIZE)\r\n");
     prvHalt();
 }
 
-void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+__attribute__((weak)) void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
     (void)xTask;
-    prvPuts("\r\n*** Stack overflow in task ");
-    prvPuts(pcTaskName);
-    prvPuts("\r\n");
+    smode_diag_puts("\r\n*** Stack overflow in task ");
+    smode_diag_puts(pcTaskName);
+    smode_diag_puts("\r\n");
     prvHalt();
 }

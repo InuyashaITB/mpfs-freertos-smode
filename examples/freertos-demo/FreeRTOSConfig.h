@@ -122,7 +122,8 @@
 #define INCLUDE_xTaskResumeFromISR                  1
 
 #ifndef __ASSEMBLER__
-    /* Assert: report on MMUART1 and park (implemented in smode/smode_irq.c). */
+    /* Assert: report through smode_diag_puts() and park (weak default in
+     * libfreertos_smode, src/freertos_glue/smode_irq.c). */
     void vAssertCalled( const char * pcFile, unsigned long ulLine );
     #define configASSERT( x )    if( ( x ) == 0 ) vAssertCalled( __FILE__, __LINE__ )
 #endif

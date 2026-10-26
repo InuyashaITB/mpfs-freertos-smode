@@ -1,7 +1,8 @@
 /*******************************************************************************
  * SPDX-License-Identifier: MIT
  *
- * S-mode interrupt/exception glue for the FreeRTOS S-mode port.
+ * S-mode interrupt/exception glue for the FreeRTOS S-mode port
+ * (libfreertos_smode).
  */
 
 #ifndef SMODE_IRQ_H_
@@ -9,25 +10,14 @@
 
 #include <stdint.h>
 #include "FreeRTOS.h"
+#include "smode/mpfs_smode.h"
 
-/* Last S-mode fault, for inspection in the debugger. */
-typedef struct
-{
-    uintptr_t scause;
-    uintptr_t sepc;
-    uintptr_t stval;
-    uintptr_t sstatus;
-} smode_fault_t;
-
-extern volatile smode_fault_t g_smode_fault;
+/* Supervisor external interrupts claimed from the PLIC so far. */
 extern volatile uint64_t g_smode_ext_irqs;
 
 /* Call from a PLIC handler with the result of a ...FromISR() call; the
  * context switch (if any) happens when the PLIC dispatch loop finishes. */
 void vSmodeYieldFromISR(BaseType_t xHigherPriorityTaskWoken);
-
-/* Called from smode_start.S on a trap before the scheduler starts. */
-void smode_early_trap_report(uintptr_t scause, uintptr_t sepc, uintptr_t stval);
 
 /* Port hooks (called from portASM.S). */
 void freertos_risc_v_application_interrupt_handler(uintptr_t scause, uintptr_t sepc);

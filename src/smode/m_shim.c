@@ -10,7 +10,7 @@
  */
 
 #include "mpfs_hal/mss_hal.h"
-#include "drivers/mss/mss_mmuart/mss_uart.h"
+#include "smode/mpfs_smode.h"
 #include "smode/m_shim.h"
 #include "smode/sbi.h"
 #include "smode/sv39.h"
@@ -29,29 +29,6 @@ extern void m_shim_trap_vector(void);
 /* PMP configuration byte: R | W | X | A=NAPOT. */
 #define M_SHIM_PMP_NAPOT_RWX    (0x1FUL)
 
-/*------------------------------------------------------------------------------
- * Polled output helpers for fatal reports (M-mode, no printf).
- */
-static void m_shim_puts(const char *s)
-{
-    MSS_UART_polled_tx_string(&g_mss_uart1_lo, (const uint8_t *)s);
-}
-
-static void m_shim_puthex(uintptr_t v)
-{
-    char buf[19];
-    static const char hex[] = "0123456789abcdef";
-
-    buf[0] = '0';
-    buf[1] = 'x';
-    for (int i = 0; i < 16; i++)
-    {
-        buf[2 + i] = hex[(v >> (60 - (4 * i))) & 0xFU];
-    }
-    buf[18] = '\0';
-    m_shim_puts(buf);
-}
-
 static void m_shim_fatal(uintptr_t mcause) __attribute__((noreturn));
 static void m_shim_fatal(uintptr_t mcause)
 {
@@ -61,15 +38,15 @@ static void m_shim_fatal(uintptr_t mcause)
     g_m_shim_fault.mstatus = read_csr(mstatus);
     g_m_shim_fault.count++;
 
-    m_shim_puts("\r\n*** M-mode shim: unhandled trap mcause=");
-    m_shim_puthex(g_m_shim_fault.mcause);
-    m_shim_puts(" mepc=");
-    m_shim_puthex(g_m_shim_fault.mepc);
-    m_shim_puts(" mtval=");
-    m_shim_puthex(g_m_shim_fault.mtval);
-    m_shim_puts(" mstatus=");
-    m_shim_puthex(g_m_shim_fault.mstatus);
-    m_shim_puts("\r\n");
+    smode_diag_puts("\r\n*** M-mode shim: unhandled trap mcause=");
+    smode_diag_puthex(g_m_shim_fault.mcause);
+    smode_diag_puts(" mepc=");
+    smode_diag_puthex(g_m_shim_fault.mepc);
+    smode_diag_puts(" mtval=");
+    smode_diag_puthex(g_m_shim_fault.mtval);
+    smode_diag_puts(" mstatus=");
+    smode_diag_puthex(g_m_shim_fault.mstatus);
+    smode_diag_puts("\r\n");
 
     /* Park. Keep interrupts off so nothing else runs on this hart. */
     write_csr(mie, 0U);
@@ -151,8 +128,8 @@ static void m_shim_sbi(m_shim_frame_t *f)
 
         case SBI_EXT_LEGACY_CONSOLE_PUTCHAR:
         {
-            uint8_t c = (uint8_t)f->a0;
-            MSS_UART_polled_tx(&g_mss_uart1_lo, &c, 1U);
+            const char c[2] = { (char)f->a0, '\0' };
+            smode_diag_puts(c);
             break;
         }
 

@@ -1,10 +1,13 @@
 /*******************************************************************************
  * SPDX-License-Identifier: MIT
  *
- * U54_1 S-mode application: FreeRTOS demo.
+ * U54_1 S-mode application: FreeRTOS demo, built against libmpfs_smode_boot.a
+ * and libfreertos_smode.a.
  *
- * Entered from u54_1() via m_shim_enter_smode() with sstatus.SIE = 0 on a
- * small boot stack. Everything in this file runs in S-mode: no machine CSRs
+ * The libraries enter s_mode_main() in S-mode with the Sv39 MMU on, the
+ * FreeRTOS trap handler installed and sstatus.SIE = 0, on a small boot stack
+ * (see smode/mpfs_smode.h). The M-mode peripheral set-up this demo needs is in
+ * m_prehook.c. Everything in this file runs in S-mode: no machine CSRs
  * (mhartid, mstatus, ...) and no HAL calls that use them.
  *
  * Tasks
@@ -28,8 +31,8 @@
  *                     Sv39 mapping.
  *   heartbeat (prio 1): every 5 s prints uptime and heap/stack headroom.
  *
- * By the time s_mode_main() runs, smode_start.S has turned the Sv39 MMU on and
- * this code executes at its virtual (high) addresses.
+ * By the time s_mode_main() runs, the library's smode_start has turned the
+ * Sv39 MMU on and this code executes at its virtual (high) addresses.
  *
  * Console output: after the scheduler starts, every line goes through
  * prvPrintf(), which formats and transmits under xConsoleMutex so lines from
@@ -49,13 +52,13 @@
 #include "mpfs_hal/mss_hal.h"
 #include "drivers/mss/mss_gpio/mss_gpio.h"
 #include "drivers/mss/mss_mmuart/mss_uart.h"
+#include "smode/mpfs_smode.h"
 #include "smode/m_shim.h"
 #include "smode/smode_irq.h"
+#include "smode/smode_plic.h"
 #include "smode/sv39.h"
 #include "smode/sbi.h"
-#include "ddr/ddr_buffers.h"
-
-extern void freertos_risc_v_trap_handler(void);
+#include "ddr_buffers.h"
 
 typedef enum
 {
@@ -645,10 +648,24 @@ static void vSpinTask(void *pvParameters)
 /*------------------------------------------------------------------------------
  * S-mode entry
  */
+/* PLIC sources used by this demo, enabled for the S context below. The GPIO
+ * side (input mode, level, interrupt enable) is set up in m_prehook.c. */
+static const PLIC_IRQn_Type g_smode_irqs[] =
+{
+    GPIO1_BIT16_or_GPIO2_BIT30_PLIC_30,
+    GPIO1_BIT17_or_GPIO2_BIT31_PLIC_31,
+    FABRIC_F2H_0_PLIC,
+};
+
 void s_mode_main(void)
 {
-    /* Install the FreeRTOS trap handler (direct mode). */
-    __asm volatile ("csrw stvec, %0" :: "r"((uintptr_t)&freertos_risc_v_trap_handler));
+    /* The library left every PLIC source disabled for this context. Nothing
+     * is taken until the scheduler starts (sstatus.SIE = 0). */
+    for (uint32_t i = 0U; i < (sizeof(g_smode_irqs) / sizeof(g_smode_irqs[0])); i++)
+    {
+        PLIC_SetPriority(g_smode_irqs[i], 2U);
+        SPLIC_enable(g_smode_irqs[i]);
+    }
 
     {
         sv39_layout_t l;

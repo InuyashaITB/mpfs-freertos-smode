@@ -8,3 +8,7 @@
 
 # Eclipse per-user settings
 /.settings*/
+
+# CMake build / install output (see Makefile)
+/build*/
+/install*/

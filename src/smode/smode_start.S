@@ -14,7 +14,9 @@
  *   3. Write satp. The next instruction is still fetched from its physical
  *      address, which the identity mapping of gigapage 0 covers.
  *   4. Move sp, pc and gp to the high alias.
- *   5. s_mode_main() (never returns).
+ *   5. smode_os_init(): OS hook (libfreertos_smode installs its trap handler;
+ *      without an OS lib the weak default keeps smode_early_trap).
+ *   6. s_mode_main(), the application (never returns).
  */
 
     .section .text.smode_start, "ax", %progbits
@@ -42,6 +44,7 @@ smode_start:
     la      t0, smode_early_trap    /* re-point stvec at the virtual address */
     csrw    stvec, t0
 
+    call    smode_os_init
     call    s_mode_main
 2:
     wfi

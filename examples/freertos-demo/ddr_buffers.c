@@ -12,7 +12,7 @@
  * Do not reference these symbols from code in other files (see the header).
  */
 
-#include "ddr/ddr_buffers.h"
+#include "ddr_buffers.h"
 
 extern char g_ddr_buffer_0[];
 extern char g_ddr_buffer_1[];

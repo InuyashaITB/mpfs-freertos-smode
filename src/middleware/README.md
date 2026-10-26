@@ -57,7 +57,7 @@ counterpart.
 | Trap return address | `mepc` | `sepc` |
 | Trap cause | `mcause` | `scause` |
 | Trap return | `mret` | `sret` |
-| Trap vector | `mtvec` (set by the application) | `stvec` (set by the application) |
+| Trap vector | `mtvec` (set by the application) | `stvec` (set by `smode_os_init()`, libfreertos_smode) |
 | Interrupt enables | `mie` | `sie` |
 | Interrupt pending (yield) | n/a | `sip` |
 | Global interrupt enable | `mstatus.MIE` = bit 3 (`0x8`) | `sstatus.SIE` = bit 1 (`0x2`) |
@@ -87,7 +87,7 @@ So:
 2. `portUPDATE_STIMER_COMPARE` (in `portASM.S`) and `vPortSetupTimerInterrupt()`
    (in `port.c`) program the next tick with an **SBI ecall**:
    `TIME.set_timer` (`a7` = `0x54494D45`, `a6` = 0, `a0` = absolute time).
-3. M-mode firmware (OpenSBI, or `application/smode/m_shim.c` here) writes
+3. M-mode firmware (OpenSBI, or `src/smode/m_shim.c` here) writes
    `mtimecmp[hart]`, clears `mip.STIP` and enables `mie.MTIE`. When the
    machine timer fires it masks `MTIE` and sets `mip.STIP`, which is
    delegated to S-mode.
@@ -204,7 +204,7 @@ interrupt 11 (machine external). The real difference is in the
 application, which must use the PLIC's **supervisor context** for the hart
 (on PolarFire SoC: context `2 x hart`, e.g. 2 for U54_1) for claim, complete,
 threshold and enables. It must also not use helpers that pick the context
-from `mhartid`. See `application/smode/smode_plic.h` and `smode_irq.c`.
+from `mhartid`. See `src/smode/smode_plic.h` and `src/freertos_glue/smode_irq.c`.
 
 ### 3.7 `mhartid` and other M-mode-only state
 
@@ -242,7 +242,7 @@ assembler-safe**: C-only content (prototypes, `configASSERT`) goes inside
 ## 4. What the S-mode port needs from M-mode
 
 Upstream needs nothing beyond running in M-mode. The S-mode port depends on
-the M-mode firmware (OpenSBI or `application/smode/m_shim.c`) for:
+the M-mode firmware (OpenSBI or `src/smode/m_shim.c`) for:
 
 | Requirement | Why |
 |---|---|
@@ -252,7 +252,7 @@ the M-mode firmware (OpenSBI or `application/smode/m_shim.c`) for:
 | PMP lets S-mode access its code, data, peripherals and `mtime` | everything; `mtime` read (§3.1) |
 | Entry into S-mode with `sstatus.SIE` = 0 and `FS` != 0 when `configENABLE_FPU` = 1 | FP code would trap with FS off |
 | `medeleg` set up for the exceptions S-mode should see | §3.3 |
-| The application sets `stvec` to `freertos_risc_v_trap_handler` before `vTaskStartScheduler()` | §3.5 |
+| `stvec` = `freertos_risc_v_trap_handler` before `vTaskStartScheduler()` (here `smode_os_init()` in libfreertos_smode does it before `s_mode_main()`) | §3.5 |
 
 With OpenSBI as the M-mode firmware, the port needs no changes: it only uses
 the standard SBI TIME extension.

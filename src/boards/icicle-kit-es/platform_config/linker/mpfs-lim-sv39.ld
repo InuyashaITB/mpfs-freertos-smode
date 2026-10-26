@@ -93,7 +93,7 @@ SECTIONS
     __ddr_cached_38bit_pa_start = ORIGIN(ddr_cached_38bit_pa);
     __ddr_cached_38bit_size     = LENGTH(ddr_cached_38bit_va);
 
-    /* 38-bit cached DDR buffers (ddr/ddr_buffers.c): three 1 GiB buffers at
+    /* 38-bit cached DDR buffers (examples/freertos-demo/ddr_buffers.c): three 1 GiB buffers at
      * fixed virtual addresses in the DDR window. They are plain symbols, not
      * an output section. Even a NOLOAD section is allocated: it gets a
      * PT_LOAD program header with a 3 GiB MemSiz, 'size' reports it as bss,
