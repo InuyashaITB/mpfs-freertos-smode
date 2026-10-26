@@ -174,6 +174,61 @@ Compile options applied to the libraries and to every application:
 -ffunction-sections -fdata-sections`; link: `-nostartfiles -Wl,--gc-sections
 -T mpfs-lim-sv39.ld`.
 
+### Building with CMake
+
+A full CMake build exists alongside the Makefiles. It builds the same
+libraries from the same sources with the same options, and installs the same
+tree. SoftConsole keeps using the Makefiles; CMake (≥ 3.24) is installed
+separately. On Windows, also pass `-G Ninja`, or `-G "Unix Makefiles"` with
+SoftConsole's `build_tools\bin` first on PATH.
+
+| CMakeLists.txt | Role |
+|---|---|
+| `src/CMakeLists.txt` | **Library**: the three `.a` files, `MpfsSmode::` targets, `install()` |
+| `examples/freertos-demo/CMakeLists.txt` | **Application**: uses only `MpfsSmode::` targets (`find_package(MpfsSmode)` when built on its own) |
+| `CMakeLists.txt` (root) | **Orchestrator**: adds both, builds the library with the demo's `FreeRTOSConfig.h` |
+
+```sh
+cmake -B build-cmake [-DCMAKE_BUILD_TYPE=Release]     # root: library + demo
+cmake --build build-cmake                            # -> build-cmake/examples/freertos-demo/freertos-demo.elf
+cmake --install build-cmake --prefix C:/mpfs-smode   # the library's install tree
+
+cmake -S src -B build-lib                            # library alone, default config
+cmake --build build-lib && cmake --install build-lib --prefix C:/mpfs-smode
+
+cmake -S examples/freertos-demo -B build-demo \
+      -DCMAKE_TOOLCHAIN_FILE=C:/mpfs-smode/lib/cmake/MpfsSmode/riscv64-unknown-elf.cmake \
+      -DCMAKE_PREFIX_PATH=C:/mpfs-smode
+cmake --build build-demo
+```
+
+Cache variables: the same names as the make variables (`FREERTOS_CONFIG_DIR`,
+`MPFS_BOARD_DIR`, `MPFS_LINKER_SCRIPT`, `MPFS_DRIVERS`, `LIBC_SPECS`,
+`LIBC_LINK_SPECS`, `MARCH`, and `CROSS_COMPILE` in the toolchain file
+`src/cmake/riscv64-unknown-elf.cmake`), plus `CMAKE_BUILD_TYPE` (`Debug`
+`-O0 -g3` / `Release` `-Os -g`) in place of `BUILD_TYPE`. Paths are relative
+to `src/`, as for make.
+
+**One install tree for both.** `make install` and `cmake --install` produce
+the same files, and each tree serves both kinds of application:
+`mpfs_smode.mk` for Makefiles, `lib/cmake/MpfsSmode/` for `find_package()`.
+`MpfsSmodeConfig.cmake` is a plain file (not a CMake export), so a library
+built with make works for a CMake application and the reverse. It provides:
+
+* `MpfsSmode::mpfs_smode`: both libraries (whole-archive), include paths,
+  compile and link options, and the linker script. Set
+  `MPFS_SMODE_LINKER_SCRIPT` before `find_package()` to use another script.
+* `MpfsSmode::mpfs_drivers`.
+
+The application's build type defaults to the libraries'.
+
+The explicit source lists (smode, glue, kernel) appear in both `src/Makefile`
+and `src/CMakeLists.txt`; keep them in sync. HAL and drivers are globbed by
+both. Debug builds link to identical code. Release builds differ by a few
+bytes in a handful of functions: the archives are identical, but CMake orders
+them differently on the link line, which shifts `.bss` and the linker's
+`gp`-relative relaxation.
+
 ### Writing an application
 
 Start from `examples/freertos-demo/Makefile`, or include `mpfs_smode.mk` from
@@ -192,6 +247,11 @@ build/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(MPFS_SMODE_CFLAGS) -c $< -o $@
 ```
+
+With CMake, see [Building with CMake](#building-with-cmake):
+`find_package(MpfsSmode)` and
+`target_link_libraries(my_app PRIVATE MpfsSmode::mpfs_smode)`; the demo's
+`CMakeLists.txt` is the template.
 
 `mpfs_smode.mk` provides `MPFS_SMODE_CFLAGS` (compile options + include
 paths), `MPFS_SMODE_LDFLAGS` (link options + linker script),
@@ -261,6 +321,8 @@ with `SMODE_HART` (checked at build time).
 | `Makefile` | Orchestrator (what SoftConsole runs): library, then the demo |
 | `src/Makefile` | Library build and install tree (plain GNU make) |
 | `src/mk/toolchain.mk`, `src/mk/mpfs_smode.mk` | Shared tools/flags; what an application Makefile includes (installed) |
+| `CMakeLists.txt`, `src/CMakeLists.txt`, `examples/freertos-demo/CMakeLists.txt` | The CMake build: orchestrator, library, application |
+| `src/cmake/` | Toolchain file, shared flags, `MpfsSmodeConfig.cmake` for `find_package()` (installed) |
 | `src/freertos_glue/config/FreeRTOSConfig.h` | The library's reference FreeRTOS configuration (default `FREERTOS_CONFIG_DIR`) |
 | `src/smode/mpfs_smode.h` | Public application interface of the libraries |
 | `src/smode/u54_1_boot.c` | `u54_1()`: pre-hook, PLIC S-context clean slate, handoff |

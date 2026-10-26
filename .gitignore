@@ -10,5 +10,5 @@
 /.settings*/
 
 # Build output and default install prefix (see Makefile)
-build/
+build*/
 /dist/
