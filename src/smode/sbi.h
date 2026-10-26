@@ -15,6 +15,9 @@
  *   legacy (0x01)        console_putchar (to smode_diag_puts())
  *   SHIM   (0x0A000000)  read_phys_u64 - debug: read a physical qword in the
  *                        38-bit cached DDR window (firmware-specific range)
+ *
+ * LIBRARY-FIXED: this is the whole SBI the M-mode shim implements; other
+ * calls return SBI_ERR_NOT_SUPPORTED.
  */
 
 #ifndef SMODE_SBI_H_

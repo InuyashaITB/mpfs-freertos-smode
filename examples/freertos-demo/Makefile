@@ -42,7 +42,7 @@ all: $(OUT_DIR)/$(APP).hex
 clean:
 	rm -rf $(OUT_DIR)
 
-$(OBJ_DIR)/%.o: $(APP_DIR)/%.c
+$(OBJ_DIR)/%.o: $(APP_DIR)/%.c $(MPFS_SMODE_CONFIG)
 	@echo "CC  $<"
 	@mkdir -p $(@D)
 	$(Q)$(CC) $(MPFS_SMODE_CFLAGS) -Wall -Wextra -MMD -MP -c $< -o $@

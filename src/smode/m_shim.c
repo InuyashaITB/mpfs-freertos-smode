@@ -15,6 +15,7 @@
 #include "smode/sbi.h"
 #include "smode/sv39.h"
 
+/* LIBRARY-FIXED: M-mode stack for traps from S-mode (SBI, timer). */
 #define M_SHIM_STACK_SIZE   (4096U)
 
 /* Private M-mode stack for traps taken after the handoff. */

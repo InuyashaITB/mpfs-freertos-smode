@@ -5,6 +5,13 @@
  *
  * MPFS HAL Embedded Software
  *
+ * LIBRARY-FIXED: this board configuration is compiled into
+ * libmpfs_smode_boot.a (HAL start-up) and installed for applications. Editing
+ * an installed copy changes nothing in the library: rebuild it. The boot
+ * mode (IMAGE_LOADED_BY_BOOTLOADER, MPFS_HAL_FIRST_HART, MPFS_HAL_LAST_HART)
+ * comes from the build (LOADED_BY_BOOTLOADER); the values here are only
+ * defaults.
+ *
  */
 
 /*******************************************************************************

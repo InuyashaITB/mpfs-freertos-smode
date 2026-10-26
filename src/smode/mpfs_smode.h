@@ -19,6 +19,26 @@
  *     smode_os_init()                                      [libfreertos_smode]
  *       stvec = freertos_risc_v_trap_handler
  *     s_mode_main()                                        [application]
+ *
+ * LIBRARY-FIXED settings: decided when the libraries are built, the same for
+ * every application linked with them. Rebuild the libraries to change one.
+ * (Marked "LIBRARY-FIXED" where they are defined.)
+ *   - FreeRTOSConfig.h (installed next to FreeRTOS.h)
+ *   - boot mode: LOADED_BY_BOOTLOADER, MPFS_HAL_FIRST_HART/LAST_HART
+ *   - -march / C library (MARCH, LIBC_SPECS); -mabi=lp64d, -mcmodel=medany,
+ *     -fno-jump-tables
+ *   - board configuration (fpga_design_config/, mpfs_hal_config/mss_sw_config.h)
+ *   - the S-mode hart: U54_1 (SMODE_HART, smode/smode_plic.h)
+ *   - the M-mode shim: trap delegation, PMP entry 0, SBI calls, 4 KiB stacks
+ *     (smode/m_shim.h, smode/sbi.h); the Sv39 mapping policy (smode/sv39.h)
+ *   - the MSS drivers in libmpfs_drivers.a (MPFS_DRIVERS)
+ * The make/CMake package stops an application build that sets a different
+ * MARCH, LIBC_SPECS, LOADED_BY_BOOTLOADER or MPFS_HAL_FIRST/LAST_HART.
+ *
+ * Application-level: everything in this header (s_mode_main and the weak
+ * hooks), PLIC sources and handlers, the other harts' functions (standalone
+ * boot), the linker script (with the symbols the libraries use) and DDR
+ * layout, and the application's own compiler options and build type.
  */
 
 #ifndef MPFS_SMODE_H_

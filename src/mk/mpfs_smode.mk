@@ -20,15 +20,36 @@
 #   MPFS_SMODE_DEPS     files to list as link prerequisites
 #   CC, OBJCOPY, SIZE, Q  from toolchain.mk
 #
-# Overridable: MPFS_SMODE_LDSCRIPT (default: the installed mpfs-lim-sv39.ld),
-# and the toolchain.mk variables. Their defaults are the ones the libraries
-# were built with (mk/build_config.mk); keep them compatible.
+# Application-level (the application may change them): MPFS_SMODE_LDSCRIPT
+# (default: the installed mpfs-lim-sv39.ld), CROSS_COMPILE, BUILD_TYPE,
+# LIBC_LINK_SPECS. Their defaults are the libraries' (mk/build_config.mk).
+#
+# LIBRARY-FIXED (compiled into the libraries; see MPFS_SMODE_FIXED in
+# mk/toolchain.mk): MARCH, LIBC_SPECS, LOADED_BY_BOOTLOADER,
+# MPFS_HAL_FIRST_HART, MPFS_HAL_LAST_HART. They are taken from the install
+# tree; setting one to a different value stops the build. Rebuild the
+# libraries to change them.
 
 ifndef MPFS_SMODE_DIR
   $(error Set MPFS_SMODE_DIR to the installed libraries before including mpfs_smode.mk)
 endif
 
 include $(MPFS_SMODE_DIR)/mk/build_config.mk
+
+# Application-level defaults: what the libraries were built with.
+CROSS_COMPILE   ?= $(MPFS_SMODE_BUILT_CROSS_COMPILE)
+BUILD_TYPE      ?= $(MPFS_SMODE_BUILT_BUILD_TYPE)
+LIBC_LINK_SPECS ?= $(MPFS_SMODE_BUILT_LIBC_LINK_SPECS)
+
+# LIBRARY-FIXED: use the libraries' values; refuse different ones.
+mpfs_smode_fix = $(if $(filter undefined,$(origin $(1))),\
+    $(eval $(1) := $(MPFS_SMODE_BUILT_$(1))),\
+    $(if $(subst $(strip $($(1))),,$(strip $(MPFS_SMODE_BUILT_$(1))))$(subst $(strip $(MPFS_SMODE_BUILT_$(1))),,$(strip $($(1)))),\
+        $(error $(1) is LIBRARY-FIXED: the libraries in $(MPFS_SMODE_DIR) were built with \
+            $(1)=$(MPFS_SMODE_BUILT_$(1)), not $($(1)). Rebuild the libraries to change it)))
+$(foreach v,MARCH LIBC_SPECS LOADED_BY_BOOTLOADER MPFS_HAL_FIRST_HART MPFS_HAL_LAST_HART,\
+    $(call mpfs_smode_fix,$v))
+
 include $(MPFS_SMODE_DIR)/mk/toolchain.mk
 
 MPFS_SMODE_LDSCRIPT ?= $(MPFS_SMODE_DIR)/lib/ldscripts/mpfs-lim-sv39.ld
@@ -48,6 +69,10 @@ MPFS_SMODE_LIBS := -Wl,--whole-archive \
                    $(MPFS_SMODE_DIR)/lib/libfreertos_smode.a \
                    -Wl,--no-whole-archive \
                    $(MPFS_SMODE_DIR)/lib/libmpfs_drivers.a
+
+# Rewritten only when the libraries' settings change: make objects depend on
+# it to rebuild them then (the demo's Makefile does).
+MPFS_SMODE_CONFIG := $(MPFS_SMODE_DIR)/mk/build_config.mk
 
 MPFS_SMODE_DEPS := $(MPFS_SMODE_DIR)/lib/libmpfs_smode_boot.a \
                    $(MPFS_SMODE_DIR)/lib/libfreertos_smode.a \

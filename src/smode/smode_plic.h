@@ -17,29 +17,18 @@
 
 #include "mpfs_hal/mss_hal.h"
 
-#ifndef SMODE_HART
-#define SMODE_HART              1U
+/* LIBRARY-FIXED: the libraries run the S-mode kernel on U54_1 (they define
+ * u54_1(), and the M-mode shim, the PLIC set-up and configSBI_HART_ID all
+ * assume hart 1). Defining SMODE_HART to anything else is an error. */
+#if defined(SMODE_HART) && (SMODE_HART != 1U)
+#error "SMODE_HART is LIBRARY-FIXED to 1 (U54_1)"
 #endif
+#undef SMODE_HART
+#define SMODE_HART              1U
 
-#if (SMODE_HART == 1U)
 #define SMODE_PLIC_TARGET       TARGET_OFFSET_HART1_S
 #define SMODE_PLIC_S_ENA        (PLIC->HART1_SMODE_ENA)
 #define SMODE_PLIC_M_ENA        (PLIC->HART1_MMODE_ENA)
-#elif (SMODE_HART == 2U)
-#define SMODE_PLIC_TARGET       TARGET_OFFSET_HART2_S
-#define SMODE_PLIC_S_ENA        (PLIC->HART2_SMODE_ENA)
-#define SMODE_PLIC_M_ENA        (PLIC->HART2_MMODE_ENA)
-#elif (SMODE_HART == 3U)
-#define SMODE_PLIC_TARGET       TARGET_OFFSET_HART3_S
-#define SMODE_PLIC_S_ENA        (PLIC->HART3_SMODE_ENA)
-#define SMODE_PLIC_M_ENA        (PLIC->HART3_MMODE_ENA)
-#elif (SMODE_HART == 4U)
-#define SMODE_PLIC_TARGET       TARGET_OFFSET_HART4_S
-#define SMODE_PLIC_S_ENA        (PLIC->HART4_SMODE_ENA)
-#define SMODE_PLIC_M_ENA        (PLIC->HART4_MMODE_ENA)
-#else
-#error "SMODE_HART must be 1..4 (the E51 has no S-mode)"
-#endif
 
 /* Disable every source for both contexts of the S-mode hart. */
 static inline void SPLIC_disable_all(void)

@@ -20,18 +20,45 @@
 #                             copy of the linker script
 #   MpfsSmode_PREFIX          the install prefix found
 #
-# Compile/link options come from build_config.cmake: the toolchain settings
-# the libraries were built with.
+# Compile/link options come from build_config.cmake: the settings the
+# libraries were built with (MPFS_SMODE_BUILT_<name>).
+#
+# LIBRARY-FIXED (compiled into the libraries): MARCH, LIBC_SPECS,
+# LOADED_BY_BOOTLOADER, MPFS_HAL_FIRST_HART, MPFS_HAL_LAST_HART. An
+# application that sets one of these variables to a different value stops
+# with an error; rebuild the libraries to change them. Application-level:
+# the toolchain (CROSS_COMPILE), CMAKE_BUILD_TYPE (defaults to the
+# libraries'), MPFS_SMODE_LINKER_SCRIPT.
 
 get_filename_component(MpfsSmode_PREFIX "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 
 include("${CMAKE_CURRENT_LIST_DIR}/build_config.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/MpfsSmodeFlags.cmake")
 
+# LIBRARY-FIXED settings: refuse a different value from the application.
+foreach(_v MARCH LIBC_SPECS LOADED_BY_BOOTLOADER MPFS_HAL_FIRST_HART MPFS_HAL_LAST_HART)
+    if(DEFINED ${_v} AND NOT "${${_v}}" STREQUAL "")
+        set(_app "${${_v}}")
+        if(_v STREQUAL "LOADED_BY_BOOTLOADER")      # ON/OFF -> 1/0
+            if(_app)
+                set(_app 1)
+            else()
+                set(_app 0)
+            endif()
+        endif()
+        if(NOT "${_app}" STREQUAL "${MPFS_SMODE_BUILT_${_v}}")
+            message(FATAL_ERROR
+                "${_v} is LIBRARY-FIXED: the libraries in ${MpfsSmode_PREFIX} were built with "
+                "${_v}=${MPFS_SMODE_BUILT_${_v}}, not ${${_v}}. Rebuild the libraries to change it.")
+        endif()
+    endif()
+endforeach()
+unset(_app)
+
 # Default the application's build type to the libraries' (as mpfs_smode.mk
 # does for make applications).
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE "${MPFS_SMODE_BUILD_TYPE}" CACHE STRING "Debug or Release" FORCE)
+    set(CMAKE_BUILD_TYPE "${MPFS_SMODE_BUILT_BUILD_TYPE}" CACHE STRING "Debug or Release" FORCE)
 endif()
 
 if(NOT MPFS_SMODE_LINKER_SCRIPT)
@@ -47,8 +74,8 @@ if(NOT CMAKE_LINK_LIBRARY_USING_WHOLE_ARCHIVE_SUPPORTED)
 endif()
 
 if(NOT TARGET MpfsSmode::mpfs_smode)
-    mpfs_smode_flags("${MPFS_SMODE_MARCH}" "${MPFS_SMODE_LIBC_SPECS}"
-                     "${MPFS_SMODE_LIBC_LINK_SPECS}" "${MPFS_SMODE_BOOT_DEFS}"
+    mpfs_smode_flags("${MPFS_SMODE_BUILT_MARCH}" "${MPFS_SMODE_BUILT_LIBC_SPECS}"
+                     "${MPFS_SMODE_BUILT_LIBC_LINK_SPECS}" "${MPFS_SMODE_BOOT_DEFS}"
                      _mpfs_cflags _mpfs_ldflags)
 
     foreach(_lib mpfs_smode_boot freertos_smode mpfs_drivers)

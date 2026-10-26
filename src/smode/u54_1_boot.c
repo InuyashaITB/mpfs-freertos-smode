@@ -42,7 +42,8 @@
 /* S-mode entry (MMU bring-up), in smode_start.S. */
 extern void smode_start(void);
 
-/* Stack used by smode_start / s_mode_main() until the scheduler starts.
+/* LIBRARY-FIXED: stack used by smode_start / s_mode_main() until the
+ * scheduler starts.
  * After that FreeRTOS uses its own ISR stack (configISR_STACK_SIZE_WORDS)
  * and task stacks. */
 #define S_BOOT_STACK_SIZE   (4096U)

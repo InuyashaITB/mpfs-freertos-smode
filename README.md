@@ -168,8 +168,9 @@ application.
 | `V` | | `V=1` prints full command lines |
 | `CP` | `cp`; `busybox cp` on Windows | SoftConsole's `build_tools` has `busybox.exe` but no `cp.exe` |
 
-After changing `CROSS_COMPILE`, `LIBC_SPECS` or `MARCH`, run `make clean`.
-Objects are kept per `BUILD_TYPE`, so switching that needs no clean.
+Changing any library setting (these variables, `FREERTOS_CONFIG_DIR`,
+`MPFS_BOARD_DIR`, `MPFS_DRIVERS`, ...) rebuilds the libraries from scratch
+automatically; no `make clean` needed.
 
 Compile options applied to the libraries and to every application:
 `-march=rv64gc -mabi=lp64d -mcmodel=medany -mstrict-align -fno-jump-tables
@@ -232,6 +233,43 @@ both. Debug builds link to identical code. Release builds differ by a few
 bytes in a handful of functions: the archives are identical, but CMake orders
 them differently on the link line, which shifts `.bss` and the linker's
 `gp`-relative relaxation.
+
+### Library-fixed vs application settings
+
+Some settings are compiled into the libraries and are the same for every
+application linked with them. They are marked **`LIBRARY-FIXED`** where they
+are defined. Changing one means rebuilding the libraries. Editing an
+installed header, or setting the variable in an application, does not change
+the library.
+
+| Setting | Where | Level |
+|---|---|---|
+| `FreeRTOSConfig.h` (tick, priorities, heap size, port options, struct layouts) | `FREERTOS_CONFIG_DIR`; installed next to `FreeRTOS.h` | **LIBRARY-FIXED** |
+| Boot mode: `LOADED_BY_BOOTLOADER`, `MPFS_HAL_FIRST_HART`, `MPFS_HAL_LAST_HART` | build variables | **LIBRARY-FIXED**, enforced |
+| `MARCH`, `LIBC_SPECS` (and `-mabi=lp64d -mcmodel=medany -fno-jump-tables`) | build variables, `mk/toolchain.mk` | **LIBRARY-FIXED**, enforced |
+| Board configuration: `fpga_design_config/`, `mss_sw_config.h` | `MPFS_BOARD_DIR` | **LIBRARY-FIXED** |
+| S-mode hart = U54_1 (`SMODE_HART`) | `smode/smode_plic.h` | **LIBRARY-FIXED** (any other value is a compile error) |
+| M-mode shim: trap delegation, PMP entry 0, SBI calls, 4 KiB M-mode and S boot stacks | `smode/m_shim.h`, `smode/sbi.h` | **LIBRARY-FIXED** |
+| Sv39 mapping policy (gigapages, permissions) | `smode/sv39.h` | **LIBRARY-FIXED** (addresses come from the linker script) |
+| MSS drivers in `libmpfs_drivers.a` | `MPFS_DRIVERS` | **LIBRARY-FIXED** (an app can still compile other drivers itself) |
+| `s_mode_main()`, `smode_m_prehook()`, `smode_diag_puts()`, FreeRTOS hooks | `smode/mpfs_smode.h` | application |
+| PLIC sources (`SPLIC_enable()`), PLIC handlers, `e51()`/`u54_2..4()` (standalone) | application code | application |
+| Linker script, DDR layout fragments | `MPFS_SMODE_LDSCRIPT` / `MPFS_SMODE_LINKER_SCRIPT`, implicit scripts | application (keep the symbols the libraries use) |
+| Compiler path (`CROSS_COMPILE`), build type, `LIBC_LINK_SPECS`, warnings | build variables | application (default: the libraries') |
+
+**Enforced** means `mpfs_smode.mk` and `MpfsSmodeConfig.cmake` take the value
+from the install tree. If the application sets a different one, the build
+stops:
+
+```
+MARCH is LIBRARY-FIXED: the libraries in ../../build/dist were built with MARCH=rv64gc, not rv64gc_zicsr_zifencei. Rebuild the libraries to change it.
+```
+
+The install tree records every library setting in `mk/build_config.mk` /
+`lib/cmake/MpfsSmode/build_config.cmake` (`MPFS_SMODE_BUILT_<name>`). The make
+library build compares them with the current settings and rebuilds from
+scratch when one changed, e.g. after `make LOADED_BY_BOOTLOADER=1`. Then the
+file's new time stamp makes the demo recompile too.
 
 ### Boot modes
 

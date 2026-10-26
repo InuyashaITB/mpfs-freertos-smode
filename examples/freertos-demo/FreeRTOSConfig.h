@@ -3,6 +3,16 @@
  *
  * FreeRTOS configuration for the S-mode port on a PolarFire SoC U54.
  *
+ * The project's top-level Makefile / CMakeLists.txt build libfreertos_smode
+ * with this file (FREERTOS_CONFIG_DIR).
+ *
+ * LIBRARY-FIXED: this file is compiled into libfreertos_smode.a (task and
+ * queue layouts, tick, heap size, port options...). Applications compile
+ * against the copy installed next to FreeRTOS.h ("FreeRTOS.h" always picks
+ * that one), so it always matches the library. Editing an installed copy, or
+ * a copy in an application, changes nothing in the library and can break it:
+ * rebuild the library with FREERTOS_CONFIG_DIR pointing at the new file.
+ *
  * This file is also included by portASM.S, so anything that is not plain
  * #define of a number must be inside #ifndef __ASSEMBLER__.
  */

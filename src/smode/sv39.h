@@ -3,6 +3,10 @@
  *
  * Sv39 page tables for the S-mode kernel: gigapage (1 GiB) mappings only.
  *
+ * LIBRARY-FIXED: the mapping policy below (one root table, gigapages, the
+ * permissions, A/D and G preset, ASID 0) is built into sv39.c. Only the
+ * addresses come from the linker script the application links with.
+ *
  * Mappings (built from the linker script, see mpfs-lim-sv39.ld):
  *   identity   VA 0x0         -> PA 0x0             1 GiB  RWX  peripherals, switch-over
  *   on-chip    l2lim_va & ~1G -> l2lim_pa & ~1G     1 GiB  RWX  code/data (high alias)

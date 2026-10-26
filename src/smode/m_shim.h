@@ -45,7 +45,10 @@ extern volatile m_shim_fault_t g_m_shim_fault;
 extern volatile uint64_t g_m_shim_timer_irqs;   /* MTIP -> STIP forwards */
 extern volatile uint64_t g_m_shim_sbi_calls;
 
-/* Exceptions delegated to S-mode. Not delegated: breakpoint (3, left to the
+/* LIBRARY-FIXED (compiled into m_shim.c; shown here for reference, changing
+ * them in an application has no effect).
+ *
+ * Exceptions delegated to S-mode. Not delegated: breakpoint (3, left to the
  * debugger), ecall from S (9, SBI) and ecall from M (11). */
 #define M_SHIM_MEDELEG  ( (1UL << 0)  /* instruction address misaligned */ \
                         | (1UL << 1)  /* instruction access fault */       \
@@ -66,7 +69,7 @@ extern volatile uint64_t g_m_shim_sbi_calls;
  * Drop the calling hart to S-mode at 'entry' with sp = 's_stack_top'.
  * Must be called in M-mode with interrupts disabled. Never returns.
  *
- * PMP: entry 0 is overwritten with a single NAPOT region covering the whole
+ * PMP (LIBRARY-FIXED): entry 0 is overwritten with a single NAPOT region covering the whole
  * address space with RWX for S/U-mode. That is fine for bring-up on Renode;
  * on hardware replace it with a configuration that only opens what the
  * S-mode kernel needs.

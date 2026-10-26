@@ -5,22 +5,26 @@
 # needs what SoftConsole ships in build_tools (make, sh, mkdir, cp, rm) and
 # the riscv64-unknown-elf toolchain on PATH.
 #
-# Variables (set on the command line or before including this file):
+# Variables (set on the command line or before including this file).
+# LIBRARY-FIXED ones are compiled into the libraries: an application built
+# against an install tree must use the values the libraries were built with
+# (mpfs_smode.mk stops otherwise). The others an application may change.
 #   CROSS_COMPILE    tool prefix, may include a directory   riscv64-unknown-elf-
 #   BUILD_TYPE       Debug (-O0 -g3) or Release (-Os -g)    Debug
-#   LIBC_SPECS       C library specs, compile + link        --specs=nano.specs
+#                    (an application may use its own; the libraries keep theirs)
+#   LIBC_SPECS       LIBRARY-FIXED. C library specs, compile + link
+#                    --specs=nano.specs (picolibc: --specs=picolibc.specs)
 #   LIBC_LINK_SPECS  extra link-only specs                  --specs=nosys.specs
-#                    (picolibc toolchains: LIBC_SPECS=--specs=picolibc.specs
-#                    LIBC_LINK_SPECS= )
-#   MARCH            -march value; default rv64gc, plus _zicsr_zifencei on
-#                    GCC >= 12 (which split them out of 'g')
+#                    (picolibc toolchains: empty)
+#   MARCH            LIBRARY-FIXED. -march value; default rv64gc, plus
+#                    _zicsr_zifencei on GCC >= 12 (which split them out of 'g')
 #   V=1              print full command lines
-#   LOADED_BY_BOOTLOADER
+#   LOADED_BY_BOOTLOADER  LIBRARY-FIXED.
 #                    0: standalone, this image does the system start-up on the
 #                    E51 (clocks, I/O, L2, MPU, PMP) and starts the U54s (default).
 #                    1: a previous boot stage (e.g. HSS) did that and starts
 #                    this image on the U54(s); the HAL skips the bring-up.
-#   MPFS_HAL_FIRST_HART, MPFS_HAL_LAST_HART
+#   MPFS_HAL_FIRST_HART, MPFS_HAL_LAST_HART  LIBRARY-FIXED.
 #                    harts the HAL starts: 0..4 standalone, 1..1 with a
 #                    bootloader (set LAST to 4 if the bootloader starts this
 #                    image on all U54s). Must include hart 1.
@@ -108,6 +112,18 @@ MPFS_CFLAGS := -march=$(MARCH) -mabi=lp64d -mcmodel=medany -mstrict-align \
 
 MPFS_LDFLAGS := -march=$(MARCH) -mabi=lp64d -mcmodel=medany $(LIBC_SPECS) \
                 $(LIBC_LINK_SPECS) -nostartfiles -Wl,--gc-sections
+
+# Settings the libraries are built with, recorded in the install tree
+# (mk/build_config.mk as MPFS_SMODE_BUILT_<name>). The library build starts
+# from scratch when one changes. Which of them an application must not
+# change is listed in mpfs_smode.mk (LIBRARY-FIXED). Library-build-only ones
+# (FREERTOS_CONFIG_DIR, ...) are defined by src/Makefile.
+MPFS_SMODE_SETTINGS := CROSS_COMPILE BUILD_TYPE MARCH LIBC_SPECS LIBC_LINK_SPECS \
+                       LOADED_BY_BOOTLOADER MPFS_HAL_FIRST_HART MPFS_HAL_LAST_HART \
+                       FREERTOS_CONFIG_DIR MPFS_BOARD_DIR MPFS_LINKER_SCRIPT MPFS_DRIVERS
+
+# $(call mpfs_differs,a,b): non-empty if the two values differ.
+mpfs_differs = $(subst $(strip $(1)),,$(strip $(2)))$(subst $(strip $(2)),,$(strip $(1)))
 
 ifeq ($(V),1)
   Q :=
