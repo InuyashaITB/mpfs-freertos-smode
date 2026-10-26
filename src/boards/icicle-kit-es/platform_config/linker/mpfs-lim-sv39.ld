@@ -4,7 +4,9 @@
  * mpfs-lim-sv39.ld
  *
  * LIM image (loaded into L2LIM by the debugger) that runs in S-mode with the
- * Sv39 MMU on, plus 3 GiB of buffers in the 38-bit cached DDR window.
+ * Sv39 MMU on, with a 3 GiB window of the 38-bit cached DDR mapped for it.
+ * How that window is used is up to the application (see the DDR window
+ * comment in SECTIONS).
  * Based on the HAL's platform_config_reference/linker/mpfs-lim.ld.
  *
  * Address map (gigapage = 1 GiB):
@@ -93,18 +95,13 @@ SECTIONS
     __ddr_cached_38bit_pa_start = ORIGIN(ddr_cached_38bit_pa);
     __ddr_cached_38bit_size     = LENGTH(ddr_cached_38bit_va);
 
-    /* 38-bit cached DDR buffers (examples/freertos-demo/ddr_buffers.c): three 1 GiB buffers at
-     * fixed virtual addresses in the DDR window. They are plain symbols, not
-     * an output section. Even a NOLOAD section is allocated: it gets a
-     * PT_LOAD program header with a 3 GiB MemSiz, 'size' reports it as bss,
-     * and Renode 1.13's LoadELF cannot handle it. There is nothing to load
-     * or clear here anyway; contents are undefined after reset. */
-    DDR_BUFFER_SIZE = 0x40000000;
-    g_ddr_buffer_0  = ORIGIN(ddr_cached_38bit_va) + 0 * DDR_BUFFER_SIZE;
-    g_ddr_buffer_1  = ORIGIN(ddr_cached_38bit_va) + 1 * DDR_BUFFER_SIZE;
-    g_ddr_buffer_2  = ORIGIN(ddr_cached_38bit_va) + 2 * DDR_BUFFER_SIZE;
-    ASSERT(3 * DDR_BUFFER_SIZE <= LENGTH(ddr_cached_38bit_va),
-           "DDR buffers do not fit in ddr_cached_38bit_va")
+    /* DDR window: smode/sv39.c maps all of ddr_cached_38bit_va (gigapages,
+     * RW) from the symbols above. Nothing here places anything in it; how it
+     * is carved up belongs to the application: add a linker script fragment
+     * of symbols (examples/freertos-demo/ddr_buffers.ld), or compute
+     * addresses at run time from sv39_get_layout(). Do not make it an output
+     * section: even a NOLOAD section gets a PT_LOAD program header with a
+     * GiB-sized MemSiz, and Renode 1.13's LoadELF cannot handle it. */
 
     /* ===================== loaded sections ============================== */
 

@@ -26,6 +26,10 @@ include $(MPFS_SMODE_DIR)/mpfs_smode.mk
 
 SRCS := app_main.c m_prehook.c other_harts.c ddr_buffers.c
 
+# Implicit linker scripts added to the library's mpfs-lim-sv39.ld: the demo's
+# layout of the DDR window (g_ddr_buffer_0..2).
+APP_LDSCRIPTS := $(APP_DIR)/ddr_buffers.ld
+
 OBJ_DIR := $(OUT_DIR)/obj/$(BUILD_TYPE)
 OBJS    := $(patsubst %.c,$(OBJ_DIR)/%.o,$(SRCS))
 ELF     := $(OUT_DIR)/$(APP).elf
@@ -38,9 +42,9 @@ $(OBJ_DIR)/%.o: $(APP_DIR)/%.c
 	@mkdir -p $(@D)
 	$(Q)$(CC) $(MPFS_SMODE_CFLAGS) -Wall -Wextra -MMD -MP -c $< -o $@
 
-$(ELF): $(OBJS) $(MPFS_SMODE_DEPS)
+$(ELF): $(OBJS) $(APP_LDSCRIPTS) $(MPFS_SMODE_DEPS)
 	@echo "LD  $@"
-	$(Q)$(CC) $(MPFS_SMODE_LDFLAGS) -Wl,-Map=$(OUT_DIR)/$(APP).map $(OBJS) $(MPFS_SMODE_LIBS) -o $@
+	$(Q)$(CC) $(MPFS_SMODE_LDFLAGS) -Wl,-Map=$(OUT_DIR)/$(APP).map $(OBJS) $(APP_LDSCRIPTS) $(MPFS_SMODE_LIBS) -o $@
 	$(Q)$(SIZE) --format=sysv --radix=16 $@
 
 $(OUT_DIR)/$(APP).hex: $(ELF)

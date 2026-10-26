@@ -312,7 +312,7 @@ flowchart LR
         direction TB
         V0["0x00000000_00000000 + 1 GiB<br/>root[0]"]
         V1["0xFFFFFFC0_00000000 + 1 GiB<br/>root[256]<br/>code / data at 0xFFFFFFC0_08000000"]
-        V2["0xFFFFFFC0_40000000 + 3 GiB<br/>root[257..259]<br/>g_ddr_buffer_0..2"]
+        V2["0xFFFFFFC0_40000000 + 3 GiB<br/>root[257..259]<br/>DDR window (demo: g_ddr_buffer_0..2)"]
     end
     subgraph PA ["Physical"]
         direction TB
@@ -328,7 +328,7 @@ flowchart LR
 |---|---|---|---|---|
 | 0 | `0x0` | `0x0` | RWX | identity map: the HAL drivers use physical peripheral addresses, and the instructions right after the `satp` write still execute from the physical copy |
 | 256 | `0xFFFFFFC0_00000000` | `0x0` | RWX | high alias of on-chip gigapage 0: where the kernel's code and data run |
-| 257–259 | `0xFFFFFFC0_40000000` | `0x10_00000000` | RW | 3 GiB of DDR buffers (`ddr/ddr_buffers.c`), data only |
+| 257–259 | `0xFFFFFFC0_40000000` | `0x10_00000000` | RW | 3 GiB DDR window, data only; the demo splits it into `g_ddr_buffer_0..2` (`examples/freertos-demo/ddr_buffers.ld`) |
 
 All leaves have `V | G | A | D` set (A/D pre-set so the hardware never needs
 to update them, which some implementations do by raising a page fault). No
@@ -488,7 +488,7 @@ Other trap paths after the handover:
 | `g_sv39_root` | `.bss`, 4 KiB, page aligned | Sv39 root page table; `satp.PPN` is its physical address |
 | `xISRStack` | `.bss`, 512 words | S-mode trap stack (`configISR_STACK_SIZE_WORDS`) |
 | `g_m_shim_stack` | `.bss`, 4 KiB | M-mode stack for traps after the handover (via `mscratch`, physical) |
-| `g_ddr_buffer_0..2` | `0xFFFFFFC0_40000000` → `0x10_00000000`, 3 x 1 GiB | DDR buffers: linker symbols, no section and no load segment (nothing loaded or cleared) |
+| `g_ddr_buffer_0..2` (demo) | `0xFFFFFFC0_40000000` → `0x10_00000000`, 3 x 1 GiB | DDR buffers: linker symbols from the demo's `ddr_buffers.ld`, no section and no load segment (nothing loaded or cleared) |
 | CLINT `mtime` | `0x0200BFF8` (identity) | read directly by S-mode (no `time` CSR on the U54) |
 | CLINT `mtimecmp[1]` | `0x02004008` | written only by the M-mode shim |
 

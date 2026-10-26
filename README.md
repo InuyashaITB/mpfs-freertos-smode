@@ -185,8 +185,36 @@ void s_mode_main(void)          /* S-mode, MMU on, FreeRTOS trap handler install
 `MPFS_SMODE_LIBS` links both libraries with `--whole-archive`: weak defaults
 (the HAL's `u54_1()`, the boot library's `smode_os_init()`) live in archive
 members that are always loaded, so without it the strong definitions would
-never be pulled in. `--gc-sections` removes what is unused. To use another
-linker script, set `MPFS_SMODE_LDSCRIPT` before including `mpfs_smode.mk`.
+never be pulled in. `--gc-sections` removes what is unused.
+
+**Linker script.** `MPFS_SMODE_LDFLAGS` links with the installed
+`lib/ldscripts/mpfs-lim-sv39.ld`; an application normally needs no linker
+script of its own. That script maps the whole DDR window (3 GiB at VA
+`0xFFFFFFC0_40000000` → PA `0x10_0000_0000`) but places nothing in it. To lay
+out your own buffers there, add an *implicit* linker script of symbols to the
+link line (an input file, not `-T`), as the demo does with
+`examples/freertos-demo/ddr_buffers.ld`:
+
+```ld
+MY_BUF_SIZE = 0x10000000;                                   /* 256 MiB */
+g_my_buf_a  = ORIGIN(ddr_cached_38bit_va);
+g_my_buf_b  = ORIGIN(ddr_cached_38bit_va) + MY_BUF_SIZE;
+ASSERT(2 * MY_BUF_SIZE <= LENGTH(ddr_cached_38bit_va), "buffers do not fit")
+```
+
+```make
+build/my_app.elf: $(OBJS) ddr_layout.ld $(MPFS_SMODE_DEPS)
+	$(CC) $(MPFS_SMODE_LDFLAGS) $(OBJS) ddr_layout.ld $(MPFS_SMODE_LIBS) -o $@
+```
+
+Or compute addresses at run time from `sv39_get_layout()` (`ddr_va`,
+`ddr_size`) and need no linker change at all. Either way, see
+[DDR buffers](#ddr-buffers) for how to reference them from code. To change the
+window itself (size, more DDR), or the L2LIM layout, copy the installed script,
+keep the regions and symbols the libraries use (`__l2lim_*`,
+`__ddr_cached_38bit_*`, the HAL's section and stack symbols; its ASSERTs check
+the layout rules), and set `MPFS_SMODE_LDSCRIPT` to it before including
+`mpfs_smode.mk`.
 
 `FreeRTOSConfig.h` is baked into `libfreertos_smode.a`. The installed copy
 (`include/freertos/FreeRTOSConfig.h`, next to `FreeRTOS.h`) is the one
@@ -219,7 +247,7 @@ with `SMODE_HART` (checked at build time).
 | `examples/freertos-demo/app_main.c` | `s_mode_main()`: PLIC sources, demo tasks (console, blink, spin "DDR Life", ddr, heartbeat) and PLIC handlers |
 | `examples/freertos-demo/m_prehook.c` | `smode_m_prehook()`: MMUART1, GPIO2, GPIO→PLIC routing; `smode_diag_puts()` on MMUART1 |
 | `examples/freertos-demo/other_harts.c` | `e51()` (UART0 banner) and `u54_2..4()`: park in WFI |
-| `examples/freertos-demo/ddr_buffers.*` | *(mmu-sv39)* 3 x 1 GiB `char[]` buffers + `g_ddr_buffer[]` pointer table |
+| `examples/freertos-demo/ddr_buffers.*` | *(mmu-sv39)* 3 x 1 GiB buffers: linker symbols (`ddr_buffers.ld`) + `g_ddr_buffer[]` pointer table |
 | `renode/mpfs-ddr-38bit-cached-3gib.repl` | *(mmu-sv39)* Adds 2 GiB of DDR to Renode's platform |
 | `.cproject` | One configuration (LIM-Debug), Makefile project calling the top-level `Makefile`; include paths kept for the indexer |
 | `*.launch` | The two Renode launchers, renamed for this project. *(mmu-sv39)* PC = `0x08000000`, stop at `s_mode_main`, load the DDR repl; ELF = `build/examples/freertos-demo/freertos-demo.elf` |
@@ -385,10 +413,9 @@ and G set. `ORIGIN(ddr_cached_38bit_va) - ORIGIN(l2lim_va)` = 896 MiB.
 
 `src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld` (installed
 with the libraries and used for every application) has a physical and a virtual region for L2LIM and
-for the DDR window. Every section is `> xxx_va AT> xxx_pa`. The DDR buffers
-are not a section at all: `g_ddr_buffer_0..2` are absolute symbols at
-`ORIGIN(ddr_cached_38bit_va)` + 0, 1 and 2 GiB (see below); they cost nothing
-in applications that do not use them. ASSERTs check the
+for the DDR window. Every section is `> xxx_va AT> xxx_pa`. Nothing is
+placed in the DDR window: `smode/sv39.c` maps all of it, and the application
+decides how to use it (the demo's `ddr_buffers.ld`, see below). ASSERTs check the
 gigapage alignment, the "DDR within 1 GiB of L2LIM" rule, and that every
 loaded section has `VMA - LMA == ONCHIP_VA_OFFSET`.
 
@@ -419,8 +446,10 @@ Still true and worth knowing:
 
 ### DDR buffers
 
-The linker script defines `g_ddr_buffer_0..2` as absolute symbols, 1 GiB
-apart from `ORIGIN(ddr_cached_38bit_va)`, and
+The demo's linker script fragment `examples/freertos-demo/ddr_buffers.ld`
+(added to the library's script on the demo's link line) defines
+`g_ddr_buffer_0..2` as absolute symbols, 1 GiB apart from
+`ORIGIN(ddr_cached_38bit_va)`, and
 `examples/freertos-demo/ddr_buffers.c` declares them `extern char[]`. They are deliberately **not** an output
 section: even a `NOLOAD` section is still *allocated*, so the linker gives it
 a `PT_LOAD` program header with `MemSiz` = 3 GiB. `size` then reports 3 GiB of

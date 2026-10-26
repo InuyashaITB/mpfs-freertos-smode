@@ -2,7 +2,8 @@
  * SPDX-License-Identifier: MIT
  *
  * Three 1 GiB buffers in the 38-bit cached DDR window, mapped by the Sv39 MMU
- * (symbols g_ddr_buffer_0..2 defined in mpfs-lim-sv39.ld). Only usable in
+ * (symbols g_ddr_buffer_0..2 defined in ddr_buffers.ld, the demo's linker
+ * script fragment; the library only maps the window). Only usable in
  * S-mode after the MMU is on.
  *
  * Access the buffers through g_ddr_buffer[], not by their symbol names.
@@ -21,7 +22,7 @@
 #include <stdint.h>
 
 #define DDR_BUFFER_COUNT    (3U)
-#define DDR_BUFFER_SIZE     (1UL << 30)     /* 1 GiB each, = DDR_BUFFER_SIZE in the .ld */
+#define DDR_BUFFER_SIZE     (1UL << 30)     /* 1 GiB each, = DDR_BUFFER_SIZE in ddr_buffers.ld */
 
 /* Virtual addresses of the buffers (defined in ddr_buffers.c). */
 extern char * const g_ddr_buffer[DDR_BUFFER_COUNT];

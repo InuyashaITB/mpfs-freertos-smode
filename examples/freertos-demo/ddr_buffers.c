@@ -3,7 +3,8 @@
  *
  * 3 x 1 GiB buffers in the 38-bit cached DDR window. See ddr_buffers.h.
  *
- * The buffers are not C objects: the linker script (mpfs-lim-sv39.ld) defines
+ * The buffers are not C objects: the demo's linker script fragment
+ * (ddr_buffers.ld, added to the library's mpfs-lim-sv39.ld) defines
  * g_ddr_buffer_0..2 as absolute symbols at ORIGIN(ddr_cached_38bit_va) + 0,
  * + 1 GiB and + 2 GiB. No section, so the ELF has no 3 GiB load segment and
  * 'size' does not count them. Contents are undefined after reset; nothing
