@@ -1,20 +1,22 @@
 # SPDX-License-Identifier: MIT
 #
-# FreeRTOS S-mode demo, built against an installed copy of the libraries.
-# Also a template for new applications.
+# Application build: the FreeRTOS S-mode demo. Also a template for new
+# applications.
 #
-# Built by the top-level Makefile ('make' in the project root), or on its own:
+# It only consumes an installed copy of the libraries (MPFS_SMODE_DIR: the
+# directory 'make -C src install PREFIX=...' created, or build/dist). It never
+# builds the libraries or looks at their sources. Run in this directory:
 #
-#   make -f examples/freertos-demo/Makefile MPFS_SMODE_DIR=<install prefix>
+#   make MPFS_SMODE_DIR=<install prefix>
+#   make clean
 #
-# MPFS_SMODE_DIR  installed libraries (default: ../../build/dist, i.e. the
-#                 install tree of this project's build)
-# OUT_DIR         output directory (default: build)
+# MPFS_SMODE_DIR  installed libraries (default: ../../build/dist)
+# OUT_DIR         output directory    (default: build)
 #
-# The FreeRTOSConfig.h in this directory is the one the top-level build uses
-# for libfreertos_smode by default (FREERTOS_CONFIG_DIR). The copy installed
-# with the libraries is the one that counts: "FreeRTOS.h" includes the
-# FreeRTOSConfig.h next to it.
+# FreeRTOSConfig.h: the configuration is compiled into libfreertos_smode, and
+# "FreeRTOS.h" includes the copy installed next to it. The one in this
+# directory only takes effect if the libraries are built with it
+# (FREERTOS_CONFIG_DIR, which the project's top-level Makefile passes).
 
 APP_DIR := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 
@@ -34,8 +36,11 @@ OBJ_DIR := $(OUT_DIR)/obj/$(BUILD_TYPE)
 OBJS    := $(patsubst %.c,$(OBJ_DIR)/%.o,$(SRCS))
 ELF     := $(OUT_DIR)/$(APP).elf
 
-.PHONY: all
+.PHONY: all clean
 all: $(OUT_DIR)/$(APP).hex
+
+clean:
+	rm -rf $(OUT_DIR)
 
 $(OBJ_DIR)/%.o: $(APP_DIR)/%.c
 	@echo "CC  $<"

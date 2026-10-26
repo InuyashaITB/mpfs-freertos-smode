@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 #
-# Tools and compile/link options shared by the library build (top-level
-# Makefile) and by applications (mpfs_smode.mk). Plain GNU make: it only
+# Tools and compile/link options shared by the library build (src/Makefile)
+# and by applications (mpfs_smode.mk). Plain GNU make: it only
 # needs what SoftConsole ships in build_tools (make, sh, mkdir, cp, rm) and
 # the riscv64-unknown-elf toolchain on PATH.
 #

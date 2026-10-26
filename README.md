@@ -98,11 +98,29 @@ Plain GNU make. Requirements: what SoftConsole ships (`make`, `mkdir`,
 newlib-nano (`riscv64-unknown-elf-gcc` on `PATH`). Nothing else to install;
 the same Makefiles work on Linux.
 
+Three Makefiles, one per role:
+
+| Makefile | Role | Knows about |
+|---|---|---|
+| `src/Makefile` | **Library**: builds the three `.a` files and the install tree | only `src/` |
+| `examples/freertos-demo/Makefile` | **Application**: builds the demo ELF | only an install tree (`MPFS_SMODE_DIR`) |
+| `Makefile` (project root) | **Orchestrator**, what SoftConsole runs: no build rules, runs the other two | both, and which `FreeRTOSConfig.h` the library gets |
+
+From the project root:
+
 ```sh
-make                        # libraries, install tree build/dist, demo
-make libs                   # libraries + install tree only
+make                        # library, then the demo
+make libs                   # library + install tree only (= make -C src FREERTOS_CONFIG_DIR=../examples/freertos-demo)
 make install PREFIX=dist    # copy the install tree to dist/ (any path, e.g. C:/mpfs-smode)
 make clean                  # remove build/
+```
+
+Each also works on its own:
+
+```sh
+make -C src                                   # library with its default FreeRTOSConfig.h
+make -C src install PREFIX=C:/mpfs-smode
+make -C examples/freertos-demo MPFS_SMODE_DIR=C:/mpfs-smode
 ```
 
 **Command line on Windows:** SoftConsole puts its `build_tools\bin` at the
@@ -128,7 +146,8 @@ build/dist/                          the install tree ('make install' copies it)
   include/freertos/                  kernel + port headers, the FreeRTOSConfig.h used
   mpfs_smode.mk                      for application Makefiles
   mk/toolchain.mk, mk/build_config.mk
-build/examples/freertos-demo/freertos-demo.elf (+ .hex, .map)
+build/lib/obj/<BUILD_TYPE>/            library objects
+build/examples/freertos-demo/freertos-demo.elf (+ .hex, .map, objects)
 ```
 
 The demo is built only from `build/dist`, exactly like an external
@@ -140,8 +159,8 @@ application.
 | `CROSS_COMPILE` | `riscv64-unknown-elf-` | may include a directory |
 | `LIBC_SPECS` / `LIBC_LINK_SPECS` | `--specs=nano.specs` / `--specs=nosys.specs` | for a picolibc toolchain: `--specs=picolibc.specs` / empty |
 | `MARCH` | `rv64gc`, `rv64gc_zicsr_zifencei` on GCC ≥ 12 | |
-| `FREERTOS_CONFIG_DIR` | `examples/freertos-demo` | `FreeRTOSConfig.h` that `libfreertos_smode` is built against (and installs) |
-| `MPFS_BOARD_DIR` | `src/boards/icicle-kit-es` | board configuration headers |
+| `FREERTOS_CONFIG_DIR` | `freertos_glue/config` (library's reference config); the root Makefile passes `../examples/freertos-demo` | `FreeRTOSConfig.h` that `libfreertos_smode` is built against (and installs). Relative to `src/` |
+| `MPFS_BOARD_DIR` | `boards/icicle-kit-es` | board configuration headers (relative to `src/`) |
 | `MPFS_LINKER_SCRIPT` | `<board>/platform_config/linker/mpfs-lim-sv39.ld` | installed with the libraries |
 | `MPFS_DRIVERS` | `mss_mmuart mss_gpio` | drivers in `libmpfs_drivers` |
 | `V` | | `V=1` prints full command lines |
@@ -229,7 +248,9 @@ the layout rules), and set `MPFS_SMODE_LDSCRIPT` to it before including
 `FreeRTOSConfig.h` is baked into `libfreertos_smode.a`. The installed copy
 (`include/freertos/FreeRTOSConfig.h`, next to `FreeRTOS.h`) is the one
 applications compile against. To change it, rebuild the library with
-`make FREERTOS_CONFIG_DIR=<dir with your FreeRTOSConfig.h>`.
+`make -C src FREERTOS_CONFIG_DIR=<dir with your FreeRTOSConfig.h>` (relative to
+`src/`, or absolute). Without it the library uses its reference
+configuration, `src/freertos_glue/config/FreeRTOSConfig.h`.
 `configPORT_YIELD_VIA_SBI_IPI` / `configSBI_HART_ID` must stay consistent
 with `SMODE_HART` (checked at build time).
 
@@ -237,8 +258,10 @@ with `SMODE_HART` (checked at build time).
 
 | File | What |
 |---|---|
-| `Makefile` | Library build, install tree, demo (plain GNU make; command line and SoftConsole) |
-| `mk/toolchain.mk`, `mk/mpfs_smode.mk` | Shared tools/flags; what an application Makefile includes (installed) |
+| `Makefile` | Orchestrator (what SoftConsole runs): library, then the demo |
+| `src/Makefile` | Library build and install tree (plain GNU make) |
+| `src/mk/toolchain.mk`, `src/mk/mpfs_smode.mk` | Shared tools/flags; what an application Makefile includes (installed) |
+| `src/freertos_glue/config/FreeRTOSConfig.h` | The library's reference FreeRTOS configuration (default `FREERTOS_CONFIG_DIR`) |
 | `src/smode/mpfs_smode.h` | Public application interface of the libraries |
 | `src/smode/u54_1_boot.c` | `u54_1()`: pre-hook, PLIC S-context clean slate, handoff |
 | `src/smode/m_shim.*`, `m_shim_trap.S` | M-mode shim: handoff, SBI timer/IPI, MTIP→STIP |
@@ -253,7 +276,7 @@ with `SMODE_HART` (checked at build time).
 | `src/middleware/README.md` | Deviations from the upstream FreeRTOS RISC-V port, M-mode vs S-mode |
 | `src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld` | *(mmu-sv39)* Linker script with physical/virtual regions |
 | `src/boards/icicle-kit-es/platform_config/mpfs_hal_config/mss_sw_config.h` | `DDR_SUPPORT` commented out (Renode start-up; image runs from L2LIM) |
-| `examples/freertos-demo/` | The demo application: `Makefile` (template for new apps), `FreeRTOSConfig.h` (1 kHz tick, mtime 1 MHz @ 0x0200BFF8, FPU context on, 32 KB heap) |
+| `examples/freertos-demo/` | The demo application: `Makefile` (template for new apps), `FreeRTOSConfig.h` (1 kHz tick, mtime 1 MHz @ 0x0200BFF8, FPU context on, 32 KB heap; the root Makefile builds the library with it) |
 | `examples/freertos-demo/app_main.c` | `s_mode_main()`: PLIC sources, demo tasks (console, blink, spin "DDR Life", ddr, heartbeat) and PLIC handlers |
 | `examples/freertos-demo/m_prehook.c` | `smode_m_prehook()`: MMUART1, GPIO2, GPIO→PLIC routing; `smode_diag_puts()` on MMUART1 |
 | `examples/freertos-demo/other_harts.c` | `e51()` (UART0 banner) and `u54_2..4()`: park in WFI |
