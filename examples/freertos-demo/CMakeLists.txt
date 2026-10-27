@@ -30,7 +30,8 @@ add_executable(freertos-demo
     other_harts.c
     ddr_buffers.c
     periph_selftest.c
-    spi_flash.c)
+    spi_flash.c
+    i2c_eeprom.c)
 
 set_target_properties(freertos-demo PROPERTIES SUFFIX ".elf")
 target_compile_options(freertos-demo PRIVATE -Wall -Wextra)

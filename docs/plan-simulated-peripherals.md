@@ -155,12 +155,13 @@ demo task exercises each command and one deliberate bad-CRC request.
   the whole array. Current-address read is supported; a "random read" is a
   2-byte write followed by reads.
 - `MPFS_I2C` never calls `FinishTransmission`, so the model relies only on
-  `Write`/`Read`.
+  `Write`/`Read`. *(Superseded: 1.13's `MPFS_I2C` turned out unusable, and
+  `i2c0` is replaced by our own controller. See "Phase 3 status".)*
 - **Optional:** write-cycle busy, where the device NAKs its address for
   about 5 ms of virtual time, for ACK polling; a WP input.
 - **Attach:** `eeprom: I2C.I2CEeprom @ i2c0 0x50`.
 
-**Firmware:** `eeprom.c` on `MSS_I2C` as master, interrupt-driven. This
+**Firmware:** `eeprom.c` (became `i2c_eeprom.c`) on `MSS_I2C` as master, interrupt-driven. This
 needs the §2.1 PLIC fix, or polled mode as a fallback. It uses
 `MSS_I2C_write_read` for random reads and splits writes on page
 boundaries.
@@ -252,7 +253,7 @@ boundaries.
 | 0 | **Done.** In SoftConsole's Renode 1.13: `MPFS_SPI`, `MPFS_I2C`, addresses and PLIC lines confirmed; `LiteX_Ethernet` loads; `include @x.cs` compiles a probe model written against the 1.13 API (`Machine`), verified; no TAP (no admin) → user-mode networking | Findings folded into this plan |
 | 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode. **Done** (see "Phase 1 status") |
 | 2 | §3 SPI NOR flash | Flash demo PASS in Renode. **Implemented; passes in Renode 1.13.1** (see "Phase 2 status"); waiting for the SoftConsole run |
-| 3 | §5 I2C EEPROM | EEPROM demo PASS |
+| 3 | §5 I2C EEPROM | EEPROM demo PASS. **Implemented; `make sim` passes in Renode 1.13.1** (see "Phase 3 status"); waiting for the SoftConsole run |
 | 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event |
 | 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames exchanged between the two simulated boards |
 | 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo between board 0 and board 1 |
@@ -436,3 +437,44 @@ Added after Phase 2, so every later phase has a one-command check:
 Usage and Renode 1.13 quirks are in `renode/README.md`. Phases 3–5 are done
 when their PASS line is in `expected-uart.txt` and `make sim` passes. It is
 also the base for Phase 6's tests.
+
+## Phase 3 status
+
+**Implemented; `make sim` passes in Renode 1.13.1** (5 expected lines).
+UART1:
+
+```
+[S] I2C0 EEPROM: raw write at 0x3C wraps to 0x00      PASS
+[S] I2C0 EEPROM: split write of 100 bytes at 0x70     PASS (3 pages, 9 busy ACK polls)
+[S] I2C0 EEPROM: random + current-address read        PASS
+[S] I2C0 EEPROM: absent device 0x51 is NACKed         PASS (status 2, expected 2 = NACK)
+[S] I2C0 EEPROM (S-mode, MSS_I2C driver, interrupts): PASS
+```
+
+- **Built-in controller unusable:** reading 1.13's `MPFS_I2C.cs` showed it
+  calls the device's `Write()` once per byte, with no start or stop. Its
+  master read never reaches 0x58, so with the vendor ISR it either waits
+  forever or writes one byte past the buffer.
+- **Our controller:** `renode/models/MpfsI2c.cs`, a CoreI2C master with
+  actions on SI clear, one `Write()` per transaction, `Read(1)` per byte,
+  and address NACK for absent or busy devices (`IsBusy()` by reflection).
+  - It replaces `i2c0`: `machine UnregisterFromParent sysbus.i2c0` works in
+    1.13 (tested), then the repl declares the new `i2c0` at the same address
+    and PLIC 58.
+  - It was unit-tested with mcs and a C# copy of `mss_i2c_isr` before
+    running in Renode.
+- **EEPROM:** `renode/models/I2cEeprom.cs`.
+- **Firmware:** `examples/freertos-demo/i2c_eeprom.c`, on the vendor
+  `MSS_I2C` driver, unchanged and interrupt-driven from S-mode.
+  - `PLIC_SetPriority` + `SPLIC_enable(I2C0_MAIN_PLIC)`. The driver's
+    `PLIC_External_i2c0_main_IRQHandler` is reached through the S-mode
+    dispatch table.
+  - Waits poll `MSS_I2C_get_status` with `vTaskDelay(1)`, bounded, because
+    `MSS_I2C_wait_complete` spins forever without `MSS_I2C_system_tick`.
+- **Where the test runs:** it needs interrupts, so the console task runs it
+  when it starts. A separate task would not fit in the heap: about 4.6 KB
+  are left of 32 KB.
+- **Negative check:** with `eeprom` removed from the repl, the test reports
+  "no device at 0x50", the scheduler keeps running, and `make sim` fails.
+- **`expected-uart.txt`:** the tick line is now `[S] tick=2`, since the
+  EEPROM test shifts the status lines by a tick.

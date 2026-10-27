@@ -4,11 +4,13 @@
  * Self-tests for the simulated peripherals. See periph_selftest.h.
  */
 
+#include <stdio.h>
 #include <string.h>
 
 #include "mpfs_hal/mss_hal.h"
 #include "drivers/mss/mss_spi/mss_spi.h"
 #include "spi_flash.h"
+#include "i2c_eeprom.h"
 #include "periph_selftest.h"
 
 #define SPI_LOOPBACK_FRAMES     (16U)
@@ -282,6 +284,140 @@ uint32_t spi_flash_selftest(selftest_print_t print)
         bad = flash_verify(SPI_FLASH_TEST_ADDR, SPI_FLASH_SECTOR_SIZE, expect_ff, &st, &got);
     }
     failed += flash_step(print, "erase sector again -> 0xFF", st, bad, SPI_FLASH_SECTOR_SIZE, got, expect_ff);
+
+    return failed;
+}
+
+/*------------------------------------------------------------------------------
+ * Phase 3: I2C EEPROM
+ */
+#define EE_WRAP_ADDR        (0x003CU)   /* 4 bytes before the end of page 0 */
+#define EE_WRAP_LEN         (8U)
+#define EE_MARK_ADDR        (0x0040U)   /* start of page 1: must stay unchanged */
+#define EE_SPLIT_ADDR       (0x0070U)   /* pages 1, 2 and 3 */
+#define EE_SPLIT_LEN        (100U)
+#define EE_RANDOM_ADDR      (0x0080U)
+
+static const char *eeprom_status_str(eeprom_status_t st)
+{
+    switch (st)
+    {
+        case EEPROM_OK:             return "ok";
+        case EEPROM_ERR_NACK:       return "NACK (no device, or it stayed busy)";
+        case EEPROM_ERR_TIMEOUT:    return "transaction did not complete";
+        default:                    return "?";
+    }
+}
+
+static uint8_t ee_split_byte(uint32_t i) { return (uint8_t)((i * 13U) + 0x21U); }
+
+/* Prints one step; returns 1 on failure. */
+static uint32_t ee_step(selftest_print_t print, const char *step, eeprom_status_t st,
+                        uint32_t ok, const char *detail)
+{
+    if (EEPROM_OK != st)
+    {
+        print("[S] I2C0 EEPROM: %-36s FAIL (%s)\r\n", step, eeprom_status_str(st));
+        return 1U;
+    }
+    print("[S] I2C0 EEPROM: %-36s %s%s\r\n", step, (0U != ok) ? "PASS" : "FAIL", detail);
+    return (0U != ok) ? 0U : 1U;
+}
+
+uint32_t i2c_eeprom_selftest(selftest_print_t print)
+{
+    static const uint8_t mark[4] = { 0x11U, 0x22U, 0x33U, 0x44U };
+    static uint8_t data[EE_SPLIT_LEN];
+    static uint8_t rd[EE_SPLIT_LEN];
+    static char detail[64];
+    uint8_t wrap[EE_WRAP_LEN];
+    uint32_t failed = 0U;
+    uint32_t ok;
+    eeprom_status_t st;
+
+    eeprom_init(&g_mss_i2c0_lo, I2C0_MAIN_PLIC, EEPROM_I2C_ADDR);
+
+    /* 1. One raw transaction of 8 bytes at 0x3C: the last 4 wrap to 0x00.
+     *    Page 1 (marked first) must be unchanged. */
+    st = eeprom_write(EE_MARK_ADDR, mark, sizeof(mark));
+    if (EEPROM_ERR_NACK == st)
+    {
+        print("[S] I2C0 EEPROM: no device at 0x%02x (%s). Is the Renode model attached? "
+              "See renode/README.md\r\n", (unsigned)EEPROM_I2C_ADDR, eeprom_status_str(st));
+        return 1U;
+    }
+    for (uint32_t i = 0U; i < EE_WRAP_LEN; i++)
+    {
+        wrap[i] = (uint8_t)(0xA0U + i);
+    }
+    if (EEPROM_OK == st)
+    {
+        st = eeprom_write_raw(EE_WRAP_ADDR, wrap, EE_WRAP_LEN);
+    }
+    ok = 0U;
+    if (EEPROM_OK == st)
+    {
+        st = eeprom_read(EE_WRAP_ADDR, rd, 4U);
+    }
+    if (EEPROM_OK == st)
+    {
+        ok = (0 == memcmp(rd, wrap, 4U)) ? 1U : 0U;
+        st = eeprom_read(0x0000U, rd, 4U);
+    }
+    if (EEPROM_OK == st)
+    {
+        ok &= (0 == memcmp(rd, &wrap[4], 4U)) ? 1U : 0U;
+        st = eeprom_read(EE_MARK_ADDR, rd, 4U);
+    }
+    if (EEPROM_OK == st)
+    {
+        ok &= (0 == memcmp(rd, mark, 4U)) ? 1U : 0U;
+    }
+    failed += ee_step(print, "raw write at 0x3C wraps to 0x00", st, ok, "");
+
+    /* 2. The same kind of write done right: split at page boundaries, ACK
+     *    polling after each page. */
+    for (uint32_t i = 0U; i < EE_SPLIT_LEN; i++)
+    {
+        data[i] = ee_split_byte(i);
+    }
+    ok = 0U;
+    st = eeprom_write(EE_SPLIT_ADDR, data, EE_SPLIT_LEN);
+    uint32_t busy = eeprom_last_busy_polls();
+    if (EEPROM_OK == st)
+    {
+        (void)memset(rd, 0, sizeof(rd));
+        st = eeprom_read(EE_SPLIT_ADDR, rd, EE_SPLIT_LEN);
+    }
+    if (EEPROM_OK == st)
+    {
+        ok = ((0 == memcmp(rd, data, EE_SPLIT_LEN)) && (busy > 0U)) ? 1U : 0U;
+    }
+    (void)snprintf(detail, sizeof(detail), " (3 pages, %lu busy ACK polls)", (unsigned long)busy);
+    failed += ee_step(print, "split write of 100 bytes at 0x70", st, ok, detail);
+
+    /* 3. Random read of 4 bytes, then a current-address read of 4 more. */
+    ok = 0U;
+    st = eeprom_read(EE_RANDOM_ADDR, rd, 4U);
+    if (EEPROM_OK == st)
+    {
+        st = eeprom_read_current(&rd[4], 4U);
+    }
+    if (EEPROM_OK == st)
+    {
+        ok = (0 == memcmp(rd, &data[EE_RANDOM_ADDR - EE_SPLIT_ADDR], 8U)) ? 1U : 0U;
+    }
+    failed += ee_step(print, "random + current-address read", st, ok, "");
+
+    /* 4. No device at 0x51: reported as a NACK, not a hang. */
+    {
+        mss_i2c_status_t probe = eeprom_probe(EEPROM_ABSENT_ADDR);
+
+        ok = (MSS_I2C_FAILED == probe) ? 1U : 0U;
+        (void)snprintf(detail, sizeof(detail), " (status %u, expected %u = NACK)",
+                       (unsigned)probe, (unsigned)MSS_I2C_FAILED);
+        failed += ee_step(print, "absent device 0x51 is NACKed", EEPROM_OK, ok, detail);
+    }
 
     return failed;
 }

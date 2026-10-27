@@ -12,3 +12,12 @@ loopback: SPI.SpiLoopback @ spi1
 
 // Phase 2: SPI NOR flash on spi0 (16 MiB, JEDEC ID EF 40 18).
 flash: SPI.NorFlash @ spi0
+
+// Phase 3: our MSS I2C controller model in place of the built-in MPFS_I2C on
+// i2c0 (see renode/README.md). The built-in one must be removed first:
+//   machine UnregisterFromParent sysbus.i2c0
+i2c0: I2C.MpfsI2c @ sysbus 0x2010A000
+    IRQ -> plic@58
+
+// AT24C256-like EEPROM, 32 KiB, 64-byte pages, at 0x50.
+eeprom: I2C.I2cEeprom @ i2c0 0x50

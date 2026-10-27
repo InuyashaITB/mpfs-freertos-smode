@@ -6,6 +6,9 @@
 SPI1 loopback (S-mode, MSS_SPI driver): 16 frames OK
 # Phase 2: SPI0 NOR flash
 SPI0 flash (S-mode, NorFlash model): PASS
-# The scheduler runs and the tick advances (2 s at the default runtime of 3 s)
+# Phase 3: I2C0 EEPROM (runs in the console task, after the scheduler starts)
+I2C0 EEPROM (S-mode, MSS_I2C driver, interrupts): PASS
+# The scheduler runs and the second status line appears (tick 2000 or a
+# little later; the default runtime is 3 s)
 scheduler running
-tick=2000
+[S] tick=2

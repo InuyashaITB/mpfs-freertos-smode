@@ -42,4 +42,16 @@ typedef void (*selftest_print_t)(const char *fmt, ...);
 #define SPI_FLASH_TEST_ADDR     (0x00010000U)
 uint32_t spi_flash_selftest(selftest_print_t print);
 
+/* Phase 3: I2C EEPROM at 0x50 on MSS I2C0 against renode/models/
+ * I2cEeprom.cs (behind renode/models/MpfsI2c.cs), through i2c_eeprom.c and
+ * the interrupt-driven MSS_I2C driver. Needs the scheduler running: call it
+ * from a task. Steps: one raw write across a page boundary (wraps to the
+ * start of the page); a split write over three pages with ACK polling;
+ * random read then current-address read; an absent device (0x51) is
+ * reported as a NACK. Prints PASS/FAIL per step and returns the number of
+ * failed steps (or 1 if the device did not answer). */
+#define EEPROM_I2C_ADDR         (0x50U)
+#define EEPROM_ABSENT_ADDR      (0x51U)
+uint32_t i2c_eeprom_selftest(selftest_print_t print);
+
 #endif /* PERIPH_SELFTEST_H_ */

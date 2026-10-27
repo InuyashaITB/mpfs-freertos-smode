@@ -20,6 +20,9 @@ the Renode monitor (paths relative to the project):
 machine LoadPlatformDescription @renode/mpfs-ddr-38bit-cached-3gib.repl
 include @renode/models/SpiLoopback.cs
 include @renode/models/NorFlash.cs
+include @renode/models/MpfsI2c.cs
+include @renode/models/I2cEeprom.cs
+machine UnregisterFromParent sysbus.i2c0      # replaced by MpfsI2c in the repl
 machine LoadPlatformDescription @renode/mpfs-sim-peripherals.repl
 ```
 
@@ -48,7 +51,7 @@ problems.
 * **Options:**
   * `SIM_TIME=10`: emulated seconds; the default 3 takes about 20 s real time.
   * `RENODE_FLAGS=...`: default `--disable-xwt --console`.
-* **New self-test:** add its PASS line to `expected-uart.txt`; a new model
+* **New self-test:** add its PASS line to `expected-uart.txt`. A new model
   also goes into `run-demo.resc` (`include`) and the launcher.
 
 Renode 1.13 notes, which explain how the script is written:
@@ -78,9 +81,11 @@ window. If a self-test reports "no response", check in the Renode monitor
 (`machine-0` prompt):
 
 ```
-peripherals                                   # spi0: 'flash', spi1: 'loopback'
+peripherals                                   # spi0: 'flash', spi1: 'loopback', i2c0 (MpfsI2c): 'eeprom'
 include @<project>/renode/models/SpiLoopback.cs
 include @<project>/renode/models/NorFlash.cs
+include @<project>/renode/models/MpfsI2c.cs
+include @<project>/renode/models/I2cEeprom.cs
 ```
 
 The `include` prints compile errors, if any. Including a model twice is
@@ -90,6 +95,59 @@ harmless.
 |---|---|---|---|
 | `loopback` | `SPI.SpiLoopback`: answers each byte with its complement | `spi1` | 1 (test) |
 | `flash` | `SPI.NorFlash`: 16 MiB serial NOR, JEDEC ID `EF 40 18` | `spi0` | 2 |
+| `i2c0` | `I2C.MpfsI2c`: MSS I2C controller, **replaces** the built-in `MPFS_I2C` | `sysbus` `0x2010A000`, PLIC 58 | 3 |
+| `eeprom` | `I2C.I2cEeprom`: AT24C256-like, 32 KiB, 64-byte pages | `i2c0` address `0x50` | 3 |
+
+## I2C controller (`i2c0`, `models/MpfsI2c.cs`)
+
+Renode 1.13's built-in `MPFS_I2C` cannot drive an EEPROM with the vendor
+`MSS_I2C` driver:
+* It calls the device's `Write()` once per byte, with no start or stop, so a
+  device cannot tell a new write's address bytes from data.
+* A master read never reaches status 0x58 (last byte NACKed). With exactly
+  N bytes the driver waits forever; with more, it writes past its buffer.
+
+So `i2c0` is replaced by our own model. The built-in one is unregistered
+first (`machine UnregisterFromParent sysbus.i2c0` in the launcher and in
+`run-demo.resc`), then `mpfs-sim-peripherals.repl` declares
+`i2c0: I2C.MpfsI2c` at the same address and PLIC line. `i2c1` keeps the
+built-in model.
+
+* **Hardware semantics** (CoreI2C status codes):
+  * STA while idle sends START (0x08, SI set). Every other action happens
+    when software clears SI, from the status and STA/STO/AA/DATA:
+    * send the address: 0x18/0x20 for write, 0x40/0x48 for read;
+    * send a data byte: 0x28/0x30;
+    * receive with ACK (0x50) or NACK (0x58), depending on AA;
+    * repeated START (0x10), or STOP (0xF8).
+  * `IRQ = ENS1 && SI`. Master mode only.
+* **Devices** (children by 7-bit address):
+  * one `Write(bytes)` per written part of a transaction, at the repeated
+    START or STOP that ends it;
+  * `Read(1)` per received byte;
+  * `FinishTransmission()` at STOP.
+  * The address is NACKed if nothing is registered there, or if the device
+    has a public `bool IsBusy()` that returns true. It is looked up by
+    reflection, so device models need no shared type.
+* **Monitor:** `i2c0 Transactions`, `AddressNacks`, `LastStatus`.
+
+## I2C EEPROM (`i2c0.eeprom`, `models/I2cEeprom.cs`)
+
+AT24C256-like: 32 KiB, 64-byte pages, 2-byte big-endian memory address.
+* **Write:** a write transaction starts with the 2 address bytes. Data after
+  them is written with **page wrap**: past the end of the 64-byte page it
+  continues at the start of the same page. A write of only the 2 address
+  bytes sets the pointer (the first half of a random read).
+* **Read:** reads continue from the pointer and increment it, so
+  current-address reads work.
+* **Write cycle:** after a data write the device NACKs its address for
+  `BusyPolls` address phases (default 3), so drivers must ACK-poll.
+* **Monitor:** `i2c0.eeprom Writes`, `BytesRead`, `BusyPolls 10` (set),
+  `WriteProtect true` (writes ACKed but ignored), `Erase`, `SaveImage
+  "<file>"` / `LoadImage "<file>"`.
+
+The firmware side is `examples/freertos-demo/i2c_eeprom.c`, on the vendor
+`MSS_I2C` driver, interrupt-driven from S-mode.
 
 ## SPI NOR flash (`spi0.flash`)
 

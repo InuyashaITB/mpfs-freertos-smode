@@ -418,8 +418,9 @@ with `SMODE_HART` (checked at build time).
 | `examples/freertos-demo/m_prehook.c` | `smode_m_prehook()`: MMUART1, GPIO2, GPIO→PLIC routing; `smode_diag_puts()` on MMUART1 |
 | `examples/freertos-demo/other_harts.c` | `e51()` (UART0 banner) and `u54_2..4()`: park in WFI |
 | `examples/freertos-demo/ddr_buffers.*` | *(mmu-sv39)* 3 x 1 GiB buffers: linker symbols (`ddr_buffers.ld`) + `g_ddr_buffer[]` pointer table |
-| `examples/freertos-demo/periph_selftest.*` | Self-tests run before the scheduler: SPI1 loopback, SPI0 NOR flash |
+| `examples/freertos-demo/periph_selftest.*` | Peripheral self-tests: SPI1 loopback and SPI0 NOR flash before the scheduler, I2C0 EEPROM in the console task |
 | `examples/freertos-demo/spi_flash.*` | Minimal SPI NOR flash driver on `MSS_SPI` (bounded, one transfer per command) |
+| `examples/freertos-demo/i2c_eeprom.*` | Minimal I2C EEPROM driver on `MSS_I2C` (interrupt-driven, page split, ACK polling) |
 | `renode/mpfs-ddr-38bit-cached-3gib.repl` | *(mmu-sv39)* Adds 2 GiB of DDR to Renode's platform |
 | `renode/run-demo.resc`, `renode/check-uart.sh`, `renode/expected-uart.txt` | Headless run of the demo and the PASS/FAIL check behind `make sim` |
 | `renode/mpfs-sim-peripherals.repl`, `renode/models/*.cs` | Simulated devices on the MSS SPI/I2C controllers and their C# models (see `renode/README.md`) |

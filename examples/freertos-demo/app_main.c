@@ -33,7 +33,9 @@
  *
  * Before the scheduler starts, s_mode_main() runs the peripheral self-tests
  * (periph_selftest.c; polled, bounded): the SPI1 loopback and the SPI0 NOR
- * flash (spi_flash.c), against the Renode models in renode/models.
+ * flash (spi_flash.c), against the Renode models in renode/models. The I2C
+ * EEPROM test needs interrupts, so the console task runs it when it starts
+ * (no extra task: the heap has little room left).
  *
  * By the time s_mode_main() runs, the library's smode_start has turned the
  * Sv39 MMU on and this code executes at its virtual (high) addresses.
@@ -207,6 +209,16 @@ static void vConsoleTask(void *pvParameters)
 
     prvPrint("[S] scheduler running. Press 1, 2 or 3 to raise GPIO2_30, "
              "GPIO2_31 or F2M_0 interrupts.\r\n");
+
+    /* Self-test that needs interrupts (MSS_I2C is interrupt-driven). */
+    {
+        uint32_t failed;
+
+        prvPrintf("[S] I2C0 EEPROM: starting\r\n");
+        failed = i2c_eeprom_selftest(prvPrintf);
+        prvPrintf("[S] I2C0 EEPROM (S-mode, MSS_I2C driver, interrupts): %s\r\n",
+                  (0U == failed) ? "PASS" : "FAIL");
+    }
 
     for (;;)
     {
