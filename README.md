@@ -417,9 +417,12 @@ with `SMODE_HART` (checked at build time).
 | `examples/freertos-demo/m_prehook.c` | `smode_m_prehook()`: MMUART1, GPIO2, GPIO→PLIC routing; `smode_diag_puts()` on MMUART1 |
 | `examples/freertos-demo/other_harts.c` | `e51()` (UART0 banner) and `u54_2..4()`: park in WFI |
 | `examples/freertos-demo/ddr_buffers.*` | *(mmu-sv39)* 3 x 1 GiB buffers: linker symbols (`ddr_buffers.ld`) + `g_ddr_buffer[]` pointer table |
+| `examples/freertos-demo/periph_selftest.*` | Self-tests run before the scheduler: SPI1 loopback, SPI0 NOR flash |
+| `examples/freertos-demo/spi_flash.*` | Minimal SPI NOR flash driver on `MSS_SPI` (bounded, one transfer per command) |
 | `renode/mpfs-ddr-38bit-cached-3gib.repl` | *(mmu-sv39)* Adds 2 GiB of DDR to Renode's platform |
+| `renode/mpfs-sim-peripherals.repl`, `renode/models/*.cs` | Simulated devices on the MSS SPI/I2C controllers and their C# models (see `renode/README.md`) |
 | `.cproject` | One configuration (LIM-Debug), Makefile project calling the top-level `Makefile`; include paths kept for the indexer |
-| `*.launch` | The two Renode launchers, renamed for this project. *(mmu-sv39)* PC = `0x08000000`, stop at `s_mode_main`, load the DDR repl; ELF = `build/examples/freertos-demo/freertos-demo.elf` |
+| `*.launch` | The two Renode launchers, renamed for this project. *(mmu-sv39)* PC = `0x08000000`, stop at `s_mode_main`, load the DDR repl, the device models and `mpfs-sim-peripherals.repl`; ELF = `build/examples/freertos-demo/freertos-demo.elf` |
 
 Removed from the example because nothing here uses them: `src/application/inc/common.h`,
 the other boards (`custom-board`, `_generated`), the Libero design inputs

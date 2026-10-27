@@ -9,3 +9,6 @@
 
 // Phase 1: test slave on spi1 (replaced by the protocol device in Phase 4).
 loopback: SPI.SpiLoopback @ spi1
+
+// Phase 2: SPI NOR flash on spi0 (16 MiB, JEDEC ID EF 40 18).
+flash: SPI.NorFlash @ spi0

@@ -31,6 +31,10 @@
  *                     Sv39 mapping.
  *   heartbeat (prio 1): every 5 s prints uptime and heap/stack headroom.
  *
+ * Before the scheduler starts, s_mode_main() runs the peripheral self-tests
+ * (periph_selftest.c; polled, bounded): the SPI1 loopback and the SPI0 NOR
+ * flash (spi_flash.c), against the Renode models in renode/models.
+ *
  * By the time s_mode_main() runs, the library's smode_start has turned the
  * Sv39 MMU on and this code executes at its virtual (high) addresses.
  *
@@ -715,6 +719,15 @@ void s_mode_main(void)
                       "(STATUS.RX_DATA_READY seen on %lu)\r\n",
                       (unsigned long)r.frames, (unsigned long)r.rx_ready_flags);
         }
+    }
+
+    {
+        uint32_t failed;
+
+        prvPrintf("[S] SPI0 flash: starting\r\n");
+        failed = spi_flash_selftest(prvPrintf);
+        prvPrintf("[S] SPI0 flash (S-mode, NorFlash model): %s\r\n",
+                  (0U == failed) ? "PASS" : "FAIL");
     }
 
     BaseType_t xOk = pdPASS;

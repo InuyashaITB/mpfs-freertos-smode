@@ -250,8 +250,8 @@ boundaries.
 | Phase | Work | Done when |
 |---|---|---|
 | 0 | **Done.** In SoftConsole's Renode 1.13: `MPFS_SPI`, `MPFS_I2C`, addresses and PLIC lines confirmed; `LiteX_Ethernet` loads; `include @x.cs` compiles a probe model written against the 1.13 API (`Machine`), verified; no TAP (no admin) → user-mode networking | Findings folded into this plan |
-| 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode. **Implemented** (see "Phase 1 status"); waiting for the Renode run |
-| 2 | §3 SPI NOR flash | Flash demo PASS in Renode |
+| 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode. **Done** (see "Phase 1 status") |
+| 2 | §3 SPI NOR flash | Flash demo PASS in Renode. **Implemented; passes in Renode 1.13.1** (see "Phase 2 status"); waiting for the SoftConsole run |
 | 3 | §5 I2C EEPROM | EEPROM demo PASS |
 | 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event |
 | 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames exchanged between the two simulated boards |
@@ -375,4 +375,52 @@ RX ready 16)`.**
 **Third Renode run: loopback passes.** UART1:
 `[S] SPI1 loopback (S-mode, MSS_SPI driver): 16 frames OK (STATUS.RX_DATA_READY seen on 0)`.
 `RX_DATA_READY` never came, as predicted. The scheduler runs normally after
-it. Phase 1 is done once the debugger is confirmed to stay attached.
+it. With both launcher fixes the debugger stays attached (confirmed). Phase 1
+is done.
+
+## Phase 2 status
+
+**Implemented, and it passes in Renode 1.13.1.** Checked with the official
+Linux portable release, the same version as SoftConsole's. The board was
+loaded as the launcher loads it and run headless. UART1:
+
+```
+[S] SPI0 flash: starting
+[S] SPI0 flash: JEDEC ID ef 40 18
+[S] SPI0 flash: erase sector -> 0xFF               PASS (busy for 3 status reads)
+[S] SPI0 flash: program 0xA5 -> 0xA5               PASS (busy for 3 status reads)
+[S] SPI0 flash: program 0x5A over it -> 0x00       PASS (busy for 3 status reads)
+[S] SPI0 flash: program across a page boundary     PASS (busy for 6 status reads)
+[S] SPI0 flash: erase sector again -> 0xFF         PASS (busy for 3 status reads)
+[S] SPI0 flash (S-mode, NorFlash model): PASS
+```
+
+The model's counters agree: 4 page programs, 2 erases, 0 ignored commands.
+
+- **Model:** `renode/models/NorFlash.cs`, attached as `spi0.flash` in
+  `mpfs-sim-peripherals.repl`; the launcher includes it. Behaviour and
+  monitor commands are in `renode/README.md`. Before Renode, it was also
+  unit-tested with a C# harness (Mono) that copies `MPFS_SPI`'s calls.
+- **`MPFS_SPI` finding (1.13 source):** in master mode the controller calls
+  the slave's `FinishTransmission()` when the received frame count reaches
+  `CONTROL.FRAMECNT`, and again when `SLAVE_SELECT` goes to 0.
+  - The model ends a command on the first call; the second call finds
+    nothing in progress.
+  - Drivers must send each command (opcode + address + data) as one transfer
+    with the frame count set to its length, as `MSS_SPI_transfer_block()`
+    does.
+  - `TX_FIFO_FULL` / `RX_FIFO_EMPTY` follow the queues, so FIFO-flag polling
+    works. The FIFO limit is `fifoSize × frameSize` = 32 × 8 after the driver
+    sets BIGFIFO.
+- **Driver:** `examples/freertos-demo/spi_flash.c` (app side), with
+  `read_id`, `read`, `program` (split at pages), `erase_sector`,
+  `wait_ready`.
+  - Its transfer is `MSS_SPI_transfer_block()`'s algorithm, bounded, so a
+    missing model reports "no response" instead of hanging.
+  - It checks WEL after WREN, so a command the device ignored shows up as an
+    error.
+- **Demo:** `spi_flash_selftest()` in `periph_selftest.c`, run from
+  `s_mode_main()` after the loopback. It uses the sector at `0x10000`.
+- **Noise:** each transfer logs `spi0: Unhandled write ... SPS, CLKMODE` and
+  `offset 0x50` (FRAMESUP) warnings. They are harmless and noted in the
+  Renode README.

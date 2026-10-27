@@ -30,4 +30,16 @@ typedef struct
  * S-mode), then transfers frames with bounded polling. */
 void spi_loopback_selftest(spi_loopback_result_t *result);
 
+/* printf-style output for the self-tests that report step by step. */
+typedef void (*selftest_print_t)(const char *fmt, ...);
+
+/* Phase 2: SPI NOR flash on MSS SPI0 against renode/models/NorFlash.cs,
+ * through spi_flash.c. Reads the JEDEC ID, then on the sector at
+ * SPI_FLASH_TEST_ADDR: erase -> all 0xFF; program 0xA5 -> 0xA5; program 0x5A
+ * over it -> 0x00 (programming only clears bits); a write that crosses a
+ * page boundary; erase -> 0xFF again. Prints PASS/FAIL per step and returns
+ * the number of failed steps (or 1 if the device did not answer). */
+#define SPI_FLASH_TEST_ADDR     (0x00010000U)
+uint32_t spi_flash_selftest(selftest_print_t print);
+
 #endif /* PERIPH_SELFTEST_H_ */
