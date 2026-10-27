@@ -63,6 +63,15 @@ void display_address_of_interest(uint64_t * address_of_interest, int nb_location
 void exit_simulation(void);
 
 void enable_interrupts(void);
+/*
+ * mpfs-freertos-smode: set by the M-mode shim right before it drops U54_1 to
+ * S-mode. From then on code on that hart cannot touch machine CSRs (mhartid,
+ * mstatus, ...): the PLIC helpers (mss_plic.h) and HAL_disable_interrupts() /
+ * HAL_restore_interrupts() (hal/hal_irq.c) use the supervisor equivalents.
+ * Global: after the handoff, M-mode code on other harts must not use them.
+ */
+extern volatile uint32_t g_hal_smode_active;
+
 uint64_t disable_interrupts(void);
 void restore_interrupts(uint64_t saved_psr);
 void __disable_irq(void);

@@ -35,7 +35,7 @@
 FREERTOS_CONFIG_DIR ?= freertos_glue/config
 MPFS_BOARD_DIR      ?= boards/icicle-kit-es
 MPFS_LINKER_SCRIPT  ?= $(MPFS_BOARD_DIR)/platform_config/linker/mpfs-lim-sv39.ld
-MPFS_DRIVERS        ?= mss_mmuart mss_gpio
+MPFS_DRIVERS        ?= mss_mmuart mss_gpio mss_spi mss_i2c
 OUT_DIR             ?= ../build/lib
 DIST_DIR            ?= ../build/dist
 

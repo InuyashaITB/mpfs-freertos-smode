@@ -63,7 +63,7 @@ After the handoff, M-mode on U54_1 only runs for traps from S-mode:
 |---|---|
 | `libmpfs_smode_boot.a` | MPFS HAL (start-up, `mss_entry.S`, PLIC/CLINT/PMP/L2, NWC), `u54_1()`, M-mode SBI shim, Sv39 bring-up, `smode_start`, diagnostics (`src/platform/mpfs_hal`, `src/platform/hal`, `src/smode`) |
 | `libfreertos_smode.a` | FreeRTOS kernel, `heap_4`, the S-mode port, PLIC dispatch / fault reporting / FreeRTOS hooks, `smode_os_init()` (`src/middleware/FreeRTOS-Kernel`, `src/freertos_glue`). Compiled against the `FreeRTOSConfig.h` in `FREERTOS_CONFIG_DIR` |
-| `libmpfs_drivers.a` | MSS drivers named in `MPFS_DRIVERS` (`mss_mmuart`, `mss_gpio`: the only ones in this repository), for applications. The two libraries above do not use them |
+| `libmpfs_drivers.a` | MSS drivers named in `MPFS_DRIVERS` (`mss_mmuart`, `mss_gpio`, `mss_spi`, `mss_i2c`: the ones in this repository), for applications. The two libraries above do not use them |
 
 The libraries only handle **U54_1**. They define `u54_1()` and nothing for
 the E51 or U54_2..4: those run the application's `e51()` / `u54_2()` ..
@@ -162,7 +162,7 @@ application.
 | `FREERTOS_CONFIG_DIR` | `freertos_glue/config` (library's reference config); the root Makefile passes `../examples/freertos-demo` | `FreeRTOSConfig.h` that `libfreertos_smode` is built against (and installs). Relative to `src/` |
 | `MPFS_BOARD_DIR` | `boards/icicle-kit-es` | board configuration headers (relative to `src/`) |
 | `MPFS_LINKER_SCRIPT` | `<board>/platform_config/linker/mpfs-lim-sv39.ld` | installed with the libraries |
-| `MPFS_DRIVERS` | `mss_mmuart mss_gpio` | drivers in `libmpfs_drivers`. To use another MSS driver, copy its folder from Microchip's `platform` repository into `src/platform/drivers/mss/` and add it here |
+| `MPFS_DRIVERS` | `mss_mmuart mss_gpio mss_spi mss_i2c` | drivers in `libmpfs_drivers`. To use another MSS driver, copy its folder from Microchip's `platform` repository into `src/platform/drivers/mss/` and add it here |
 | `LOADED_BY_BOOTLOADER` | `0` | `0` standalone, `1` started by a bootloader (e.g. HSS); see [Boot modes](#boot-modes) |
 | `MPFS_HAL_FIRST_HART` / `MPFS_HAL_LAST_HART` | `0`/`4` standalone, `1`/`1` with a bootloader | harts the HAL starts; must include hart 1 |
 | `V` | | `V=1` prints full command lines |
@@ -427,7 +427,8 @@ the other boards (`custom-board`, `_generated`), the Libero design inputs
 (`platform/soc_config_generator/`), the DDR build configuration
 (`platform_config_ddr/`), the HAL's reference linker scripts and config
 (`platform/platform_config_reference/`), the HAL's `Jenkinsfile`, and every MSS
-driver except `mss_mmuart` and `mss_gpio`. The board's design headers
+driver except `mss_mmuart`, `mss_gpio` and (restored on `sim-peripherals`)
+`mss_spi`, `mss_i2c`. The board's design headers
 (`icicle-kit-es/fpga_design_config/`) are kept as generated; to change the
 design, regenerate them with Microchip's `mpfs_configuration_generator.py` from
 the Libero XML, outside this project.
@@ -569,10 +570,19 @@ never land inside it. That is the only time `spin` can block.
   SBI TIME extension).
 * Only U54_1 is used. `SMODE_HART` in `smode_plic.h` and the hart-specific
   bits in `u54_1_boot.c` would need changing to move it.
-* Code in S-mode must not call HAL functions that read `mhartid` (PLIC
-  helpers, `mss_config_clk_rst()`, `MSS_GPIO_enable_irq()`, `SysTick_Config()`
-  ...). Do that set-up in `smode_m_prehook()` before the handoff, or add
-  S-mode variants like `smode_plic.h`.
+* Code in S-mode must not use machine CSRs. Two HAL areas have been made
+  S-mode aware, so MSS drivers built on them work from S-mode unchanged:
+  * The PLIC helpers in `mss_plic.h` (`PLIC_EnableIRQ`, `PLIC_DisableIRQ`,
+    claim/complete, threshold, `PLIC_init`).
+  * `HAL_disable_interrupts` / `HAL_restore_interrupts` (`hal/hal_irq.c`,
+    used by the I2C driver).
+
+  After the shim drops U54_1 to S-mode (`g_hal_smode_active`, set in
+  `m_shim.c`), they use U54_1's S context and `sstatus.SIE`. The flag is
+  global, so M-mode code on other harts must not use them after that.
+  Everything else that reads `mhartid` stays M-mode only:
+  `mss_config_clk_rst()`, `MSS_GPIO_enable_irq()` (its GPIO part),
+  `SysTick_Config()` ... Do that set-up in `smode_m_prehook()`.
 
 ## Sv39 MMU (branch `mmu-sv39`)
 

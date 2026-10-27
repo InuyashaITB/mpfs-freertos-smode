@@ -59,6 +59,7 @@
 #include "smode/sv39.h"
 #include "smode/sbi.h"
 #include "ddr_buffers.h"
+#include "periph_selftest.h"
 
 typedef enum
 {
@@ -685,6 +686,24 @@ void s_mode_main(void)
                       (unsigned long)b, (unsigned long)va,
                       (unsigned long)(l.ddr_pa + (va - l.ddr_va)),
                       (unsigned long)(DDR_BUFFER_SIZE >> 20));
+        }
+    }
+
+    {
+        spi_loopback_result_t r;
+
+        spi_loopback_selftest(&r);
+        if (0U == r.errors)
+        {
+            prvPrintf("[S] SPI1 loopback (S-mode, MSS_SPI driver): %lu frames OK\r\n",
+                      (unsigned long)r.frames);
+        }
+        else
+        {
+            prvPrintf("[S] SPI1 loopback: %lu of %lu frames wrong, first sent 0x%02lx got 0x%02lx "
+                      "(expected the complement)\r\n",
+                      (unsigned long)r.errors, (unsigned long)r.frames,
+                      (unsigned long)r.first_bad_tx, (unsigned long)r.first_bad_rx);
         }
     }
 

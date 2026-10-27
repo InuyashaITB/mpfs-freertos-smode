@@ -32,6 +32,14 @@ void HAL_enable_interrupts(void) {
  */
 psr_t HAL_disable_interrupts(void) {
     psr_t psr;
+
+    /* mpfs-freertos-smode: in S-mode mask with sstatus.SIE (mss_util.h). */
+    if (0U != g_hal_smode_active)
+    {
+        __asm volatile ("csrrc %0, sstatus, %1" : "=r"(psr) : "r"(SSTATUS_SIE) : "memory");
+        return(psr);
+    }
+
     psr = read_csr(mstatus);
     __disable_irq();
     return(psr);
@@ -41,6 +49,16 @@ psr_t HAL_disable_interrupts(void) {
  * 
  */
 void HAL_restore_interrupts(psr_t saved_psr) {
+    /* mpfs-freertos-smode: in S-mode restore only sstatus.SIE. */
+    if (0U != g_hal_smode_active)
+    {
+        if (0U != (saved_psr & SSTATUS_SIE))
+        {
+            __asm volatile ("csrs sstatus, %0" :: "r"(SSTATUS_SIE) : "memory");
+        }
+        return;
+    }
+
     write_csr(mstatus, saved_psr);
 }
 

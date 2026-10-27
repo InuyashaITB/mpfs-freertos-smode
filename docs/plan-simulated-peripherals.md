@@ -250,7 +250,7 @@ boundaries.
 | Phase | Work | Done when |
 |---|---|---|
 | 0 | **Done.** In SoftConsole's Renode 1.13: `MPFS_SPI`, `MPFS_I2C`, addresses and PLIC lines confirmed; `LiteX_Ethernet` loads; `include @x.cs` compiles a probe model written against the 1.13 API (`Machine`), verified; no TAP (no admin) → user-mode networking | Findings folded into this plan |
-| 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode |
+| 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode. **Implemented** (see "Phase 1 status"); waiting for the Renode run |
 | 2 | §3 SPI NOR flash | Flash demo PASS in Renode |
 | 3 | §5 I2C EEPROM | EEPROM demo PASS |
 | 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event |
@@ -286,3 +286,39 @@ and riskiest.
   self-contained, and test each with `include` in 1.13 early.
 - **`LiteX_Ethernet` short-frame padding** looks suspicious. We may need a
   model subclass, or the driver can pad frames to 60 bytes itself.
+
+## Phase 1 status
+
+Implemented, built (make and CMake, Debug and Release); not yet run in
+Renode (no Renode in the build container).
+
+- **HAL S-mode support** (`g_hal_smode_active`, defined in `mss_util.c`,
+  set by `m_shim_enter_smode()` right before `mret`):
+  - `mss_plic.h`: `PLIC_EnableIRQ/DisableIRQ/ClaimIRQ/CompleteIRQ/
+    SetPriority_Threshold/init` use U54_1's S context instead of reading
+    `mhartid`.
+  - `hal/hal_irq.c`: `HAL_disable_interrupts/HAL_restore_interrupts` use
+    `sstatus.SIE` instead of `mstatus`. Found while restoring the drivers:
+    `mss_i2c` masks interrupts with them.
+  - Checked in the ELF: every `mhartid` read in those helpers comes after
+    the flag test; the SPI driver functions touch no machine CSR.
+- **Drivers** `mss_spi`, `mss_i2c` restored from `9b7725d^` and added to the
+  default `MPFS_DRIVERS`. Small fixes to build with this HAL:
+  - includes point to `mpfs_hal/mss_hal.h` (they used the older
+    `mpfs_hal/mss_plic.h` layout);
+  - `mss_i2c.c`'s private `disable_interrupts`/`restore_interrupts`
+    renamed (clash with `mss_util.h`) and keep the full `psr_t`.
+- **Prehook:** SPI0/1 and I2C0/1 clocks and resets on.
+- **Renode:**
+  - `renode/models/SpiLoopback.cs`: a test slave that answers each byte with
+    its complement; 1.13 API.
+  - `renode/mpfs-sim-peripherals.repl` attaches it to `spi1`.
+  - `renode/README.md` describes the files.
+  - The debug launcher includes the model and loads the repl after the DDR
+    repl.
+- **Demo:** `periph_selftest.c` runs `spi_loopback_selftest()` in
+  `s_mode_main()` (S-mode, before the scheduler, polled):
+  `MSS_SPI_init()` + master mode 0 + 16 × `MSS_SPI_transfer_frame()` on SPI1.
+  Expected UART1 line:
+  `[S] SPI1 loopback (S-mode, MSS_SPI driver): 16 frames OK`.
+

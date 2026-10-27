@@ -39,7 +39,7 @@ set(FREERTOS_CONFIG_DIR "freertos_glue/config" CACHE PATH
 set(MPFS_BOARD_DIR "boards/icicle-kit-es" CACHE PATH "Board configuration headers")
 set(MPFS_LINKER_SCRIPT "" CACHE FILEPATH
     "Linker script installed for applications (default: <board>/platform_config/linker/mpfs-lim-sv39.ld)")
-set(MPFS_DRIVERS "mss_mmuart;mss_gpio" CACHE STRING "drivers/mss/<name> built into libmpfs_drivers")
+set(MPFS_DRIVERS "mss_mmuart;mss_gpio;mss_spi;mss_i2c" CACHE STRING "drivers/mss/<name> built into libmpfs_drivers")
 set(LIBC_SPECS "--specs=nano.specs" CACHE STRING
     "C library specs, compile + link (picolibc: --specs=picolibc.specs)")
 set(LIBC_LINK_SPECS "--specs=nosys.specs" CACHE STRING "Extra link-only specs (picolibc: empty)")

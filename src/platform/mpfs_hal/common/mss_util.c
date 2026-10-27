@@ -29,6 +29,12 @@ void enable_interrupts(void) {
 }
 
 /*------------------------------------------------------------------------------
+ * mpfs-freertos-smode: non-zero once the M-mode shim has dropped U54_1 to
+ * S-mode (see mss_util.h).
+ */
+volatile uint32_t g_hal_smode_active = 0U;
+
+/*------------------------------------------------------------------------------
  *
  */
 uint64_t disable_interrupts(void) {

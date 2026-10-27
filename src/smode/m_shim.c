@@ -273,6 +273,11 @@ void m_shim_enter_smode(void (*entry)(void), uintptr_t s_stack_top)
 
     write_csr(mepc, (uintptr_t)entry);
 
+    /* From here on the HAL's PLIC helpers (mss_plic.h) must not read
+     * mhartid on this hart: point them at its supervisor context. */
+    g_hal_smode_active = 1U;
+    __asm volatile ("fence rw, rw" ::: "memory");
+
     __asm volatile ("mv sp, %0\n"
                     "fence.i\n"
                     "mret\n"

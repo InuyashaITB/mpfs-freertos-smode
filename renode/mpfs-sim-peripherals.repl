@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: MIT
+//
+// Simulated devices attached to the PolarFire SoC MSS peripherals
+// (mpfs-freertos-smode, branch sim-peripherals). Loaded after the board's
+// platform and after the C# models it uses have been included (see the
+// debug launcher, or renode/README.md).
+//
+// MPFS_SPI takes a single slave per controller (no chip-select routing).
+
+// Phase 1: test slave on spi1 (replaced by the protocol device in Phase 4).
+loopback: SPI.SpiLoopback @ spi1

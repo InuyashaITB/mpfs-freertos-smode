@@ -28,7 +28,8 @@ add_executable(freertos-demo
     app_main.c
     m_prehook.c
     other_harts.c
-    ddr_buffers.c)
+    ddr_buffers.c
+    periph_selftest.c)
 
 set_target_properties(freertos-demo PROPERTIES SUFFIX ".elf")
 target_compile_options(freertos-demo PRIVATE -Wall -Wextra)

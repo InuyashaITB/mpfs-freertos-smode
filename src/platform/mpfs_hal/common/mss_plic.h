@@ -543,6 +543,25 @@ typedef struct
 
 extern const unsigned long plic_hart_lookup[5U];
 
+/*-------------------------------------------------------------------------*//**
+ * mpfs-freertos-smode: S-mode support.
+ *
+ * g_hal_smode_active (mss_util.c) is set by the M-mode shim right before it
+ * drops U54_1 to S-mode. From then on code on that hart cannot read mhartid
+ * (an illegal instruction in S-mode), so the helpers below that pick a PLIC
+ * context from mhartid use U54_1's supervisor context instead. The MSS
+ * drivers, which call PLIC_EnableIRQ() / PLIC_DisableIRQ(), then run
+ * unchanged in S-mode.
+ *
+ * The flag is global: after the handoff, code still running in M-mode on
+ * another hart must not use these helpers (the libraries leave the other
+ * harts to the application, parked in the demo).
+ */
+extern volatile uint32_t g_hal_smode_active;
+
+#define PLIC_SMODE_TARGET       TARGET_OFFSET_HART1_S
+#define PLIC_SMODE_ENA          (PLIC->HART1_SMODE_ENA)
+
 /***************************************************************************//**
  * PLIC: Platform Level Interrupt Controller
  */
@@ -560,7 +579,20 @@ extern const unsigned long plic_hart_lookup[5U];
 static inline void PLIC_init(void)
 {
     uint32_t inc;
-    uint64_t hart_id  = read_csr(mhartid);
+    uint64_t hart_id;
+
+    if (0U != g_hal_smode_active)
+    {
+        /* S-mode: this hart's S context only; mie is not accessible. */
+        for(inc = 0UL; inc < PLIC_SET_UP_REGISTERS; inc++)
+        {
+            PLIC_SMODE_ENA[inc] = 0U;
+        }
+        PLIC->TARGET[PLIC_SMODE_TARGET].PRIORITY_THRESHOLD  = 0U;
+        return;
+    }
+
+    hart_id  = read_csr(mhartid);
 
     /* Disable all interrupts for the current hart. */
     switch(hart_id)
@@ -641,7 +673,15 @@ static inline void PLIC_init(void)
 static inline void PLIC_EnableIRQ(PLIC_IRQn_Type IRQn)
 {
     uint32_t current;
-    uint64_t hart_id  = read_csr(mhartid);
+    uint64_t hart_id;
+
+    if (0U != g_hal_smode_active)
+    {
+        PLIC_SMODE_ENA[IRQn / 32U] |= (uint32_t)1 << (IRQn % 32U);
+        return;
+    }
+
+    hart_id  = read_csr(mhartid);
 
     switch(hart_id)
     {
@@ -691,7 +731,15 @@ static inline void PLIC_EnableIRQ(PLIC_IRQn_Type IRQn)
 static inline void PLIC_DisableIRQ(PLIC_IRQn_Type IRQn)
 {
     uint32_t current;
-    uint64_t hart_id  = read_csr(mhartid);
+    uint64_t hart_id;
+
+    if (0U != g_hal_smode_active)
+    {
+        PLIC_SMODE_ENA[IRQn / 32U] &= ~((uint32_t)1 << (IRQn % 32U));
+        return;
+    }
+
+    hart_id  = read_csr(mhartid);
 
     switch(hart_id)
     {
@@ -764,7 +812,14 @@ static inline uint32_t PLIC_pending(PLIC_IRQn_Type IRQn)
  */
 static inline uint32_t PLIC_ClaimIRQ(void)
 {
-    uint64_t hart_id  = read_csr(mhartid);
+    uint64_t hart_id;
+
+    if (0U != g_hal_smode_active)
+    {
+        return (PLIC->TARGET[PLIC_SMODE_TARGET].CLAIM_COMPLETE);
+    }
+
+    hart_id  = read_csr(mhartid);
 
     return (PLIC->TARGET[plic_hart_lookup[hart_id]].CLAIM_COMPLETE);
 }
@@ -775,9 +830,17 @@ static inline uint32_t PLIC_ClaimIRQ(void)
  */
 static inline void PLIC_CompleteIRQ(uint32_t source)
 {
-    uint64_t hart_id  = read_csr(mhartid);
+    uint64_t hart_id;
 
     ASSERT(source <= MAX_PLIC_INT);
+
+    if (0U != g_hal_smode_active)
+    {
+        PLIC->TARGET[PLIC_SMODE_TARGET].CLAIM_COMPLETE  = source;
+        return;
+    }
+
+    hart_id  = read_csr(mhartid);
 
     PLIC->TARGET[plic_hart_lookup[hart_id]].CLAIM_COMPLETE  = source;
 }
@@ -796,9 +859,17 @@ static inline void PLIC_CompleteIRQ(uint32_t source)
  */
 static inline void PLIC_SetPriority_Threshold(uint32_t threshold)
 {
-    uint64_t hart_id  = read_csr(mhartid);
+    uint64_t hart_id;
 
     ASSERT(threshold <= 7);
+
+    if (0U != g_hal_smode_active)
+    {
+        PLIC->TARGET[PLIC_SMODE_TARGET].PRIORITY_THRESHOLD  = threshold;
+        return;
+    }
+
+    hart_id  = read_csr(mhartid);
 
     PLIC->TARGET[plic_hart_lookup[hart_id]].PRIORITY_THRESHOLD  = threshold;
 }
