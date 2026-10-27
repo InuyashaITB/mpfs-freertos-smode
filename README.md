@@ -560,6 +560,18 @@ never land inside it. That is the only time `spin` can block.
   with "Argument to arithmetic operation not a number or boolean", and
   Eclipse ends the session right after `load` ("Remote doesn't know how to
   detach"). Semihosting is off too: Renode has no `monitor arm semihosting`.
+* Keep `set riscv use-compressed-breakpoints on` in the launcher's "Other gdb
+  client commands". With the default (`auto`), gdb 9.1 reads the instruction
+  at a breakpoint's address when the breakpoint is created, to choose a 2- or
+  4-byte `ebreak`. The symbols are virtual and the MMU is still off at launch,
+  so that read fails ("Cannot access memory at address 0xffffffc0…"). The
+  stop-at `tbreak s_mode_main` is then refused and Eclipse ends the session.
+  Renode handles breakpoints itself (`Z0`), so the size does not matter to it.
+* Breakpoints placed in the Breakpoints view on M-mode functions (`e51`,
+  `u54_1`, the shim) are set at their virtual address and never hit. Use the
+  physical symbol copy described above, or `break *0x0800xxxx`.
+* A SIGTRAP at a physical PC right after `-gdb-exit` in the gdb trace is gdb
+  halting the target to detach, not a fault.
 * `LoadPlatformDescription … already defined` in the gdb console means the
   launch reused a Renode instance from a previous session, so the repls were
   loaded twice. Stop Renode and start the launch group again for a clean

@@ -364,3 +364,15 @@ RX ready 16)`.**
   `mpfs-freertos-smode Renode All-harts Debug.launch`. The symbols still come
   from the `file` command in "Other gdb client commands". README "Debugging
   notes" explains both.
+- **Then:** the launch got past `load`, but `tbreak s_mode_main` (the stop-at
+  step) failed with "Cannot access memory at address 0xffffffc008001bd8",
+  and Eclipse ended the session again. With `use-compressed-breakpoints`
+  set to `auto`, gdb 9.1 reads the instruction at the (virtual) breakpoint
+  address while the MMU is still off.
+- **Fix:** `set riscv use-compressed-breakpoints on` in the launcher. Renode
+  handles breakpoints through `Z0` and ignores their size.
+
+**Third Renode run: loopback passes.** UART1:
+`[S] SPI1 loopback (S-mode, MSS_SPI driver): 16 frames OK (STATUS.RX_DATA_READY seen on 0)`.
+`RX_DATA_READY` never came, as predicted. The scheduler runs normally after
+it. Phase 1 is done once the debugger is confirmed to stay attached.
