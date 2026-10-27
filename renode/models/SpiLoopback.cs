@@ -12,8 +12,6 @@
 //
 // Monitor: spi1.loopback BytesTransferred / Transactions
 //
-using Antmicro.Renode.Logging;
-
 namespace Antmicro.Renode.Peripherals.SPI
 {
     public class SpiLoopback : ISPIPeripheral
@@ -33,7 +31,6 @@ namespace Antmicro.Renode.Peripherals.SPI
         public void FinishTransmission()
         {
             Transactions++;
-            this.Log(LogLevel.Debug, "Transaction {0} done, {1} bytes so far", Transactions, BytesTransferred);
         }
 
         public void Reset()

@@ -692,18 +692,27 @@ void s_mode_main(void)
     {
         spi_loopback_result_t r;
 
+        prvPrintf("[S] SPI1 loopback: starting\r\n");
         spi_loopback_selftest(&r);
-        if (0U == r.errors)
+        if ((0U != r.tx_timeouts) || (0U != r.rx_timeouts))
         {
-            prvPrintf("[S] SPI1 loopback (S-mode, MSS_SPI driver): %lu frames OK\r\n",
-                      (unsigned long)r.frames);
+            prvPrintf("[S] SPI1 loopback: no response, %lu of %lu frames timed out "
+                      "(TX done %lu, RX ready %lu). Is the Renode model attached? "
+                      "See renode/README.md\r\n",
+                      (unsigned long)(r.tx_timeouts + r.rx_timeouts), (unsigned long)r.frames,
+                      (unsigned long)r.tx_timeouts, (unsigned long)r.rx_timeouts);
         }
-        else
+        if (0U != r.errors)
         {
             prvPrintf("[S] SPI1 loopback: %lu of %lu frames wrong, first sent 0x%02lx got 0x%02lx "
                       "(expected the complement)\r\n",
                       (unsigned long)r.errors, (unsigned long)r.frames,
                       (unsigned long)r.first_bad_tx, (unsigned long)r.first_bad_rx);
+        }
+        if ((0U == r.errors) && (0U == r.tx_timeouts) && (0U == r.rx_timeouts))
+        {
+            prvPrintf("[S] SPI1 loopback (S-mode, MSS_SPI driver): %lu frames OK\r\n",
+                      (unsigned long)r.frames);
         }
     }
 

@@ -322,3 +322,18 @@ Renode (no Renode in the build container).
   Expected UART1 line:
   `[S] SPI1 loopback (S-mode, MSS_SPI driver): 16 frames OK`.
 
+**First Renode run: hang after the DDR lines.**
+- **Symptom:** UART1 stopped after `[S] DDR buf2 ...`, and the debug session ended with
+  "Remote doesn't know how to detach".
+- **Cause:** the self-test used `MSS_SPI_transfer_frame()`, which polls
+  `STATUS` without a timeout. With no answering device on `spi1`, or a
+  1.13 `MPFS_SPI` that doesn't raise the bits it waits for, the boot hung
+  there.
+- **Fix:**
+  - The self-test now does the same steps with both waits bounded. It
+    reports `no response` with the stage that timed out (TX done / RX
+    ready), and prints `[S] SPI1 loopback: starting` first.
+  - `SpiLoopback.cs` no longer uses the logging API (bare 1.13 interface).
+  - `renode/README.md` explains how to check that models loaded: errors
+    from the launcher's `monitor include` are not shown in the Renode log.
+

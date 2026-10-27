@@ -19,6 +19,21 @@ include @renode/models/SpiLoopback.cs
 machine LoadPlatformDescription @renode/mpfs-sim-peripherals.repl
 ```
 
+## Checking that the models loaded
+
+The launcher sends these commands through gdb (`monitor ...`). Errors from
+them, such as a model that does not compile, do not show up in the Renode log
+window. If a self-test reports "no response", check in the Renode monitor
+(`machine-0` prompt):
+
+```
+peripherals                                   # spi1 should list 'loopback'
+include @<project>/renode/models/SpiLoopback.cs
+```
+
+The `include` prints compile errors, if any. Including a model twice is
+harmless.
+
 | Device | Model | Attached to | Phase |
 |---|---|---|---|
 | `loopback` | `SPI.SpiLoopback`: answers each byte with its complement | `spi1` | 1 (test) |

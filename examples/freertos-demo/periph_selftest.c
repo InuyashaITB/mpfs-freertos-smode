@@ -10,12 +10,61 @@
 
 #define SPI_LOOPBACK_FRAMES     (16U)
 
+/* Polls before a wait is given up. A frame at the configured clock divider
+ * takes a few microseconds on hardware; in Renode the status is immediate. */
+#define SPI_POLL_LIMIT          (100000U)
+
+/* MSS SPI register bits (the same values mss_spi.c uses privately). */
+#define SPI_STATUS_TX_DONE          (0x00000001U)
+#define SPI_STATUS_RX_DATA_READY    (0x00000002U)
+#define SPI_CMD_RX_FIFO_RESET       (0x00000004U)
+#define SPI_CMD_TX_FIFO_RESET       (0x00000008U)
+#define SPI_CTRL_TXRXDFCOUNT_MASK   (0x00FFFF00U)
+#define SPI_CTRL_TXRXDFCOUNT_SHIFT  (8U)
+
+typedef enum
+{
+    SPI_XFER_OK,
+    SPI_XFER_TX_TIMEOUT,
+    SPI_XFER_RX_TIMEOUT,
+} spi_xfer_status_t;
+
+/* One full-duplex frame, as MSS_SPI_transfer_frame() does it, but with both
+ * waits bounded. */
+static spi_xfer_status_t spi_transfer_frame_bounded(SPI_TypeDef *spi, uint32_t tx, uint32_t *rx)
+{
+    uint32_t n;
+
+    spi->FRAMESUP = 0U;
+    spi->CONTROL = (spi->CONTROL & ~SPI_CTRL_TXRXDFCOUNT_MASK)
+                   | (1U << SPI_CTRL_TXRXDFCOUNT_SHIFT);
+    spi->COMMAND |= (SPI_CMD_TX_FIFO_RESET | SPI_CMD_RX_FIFO_RESET);
+
+    spi->TX_DATA = tx;
+
+    for (n = 0U; (n < SPI_POLL_LIMIT) && (0U == (spi->STATUS & SPI_STATUS_TX_DONE)); n++)
+    {
+    }
+    if (n == SPI_POLL_LIMIT)
+    {
+        return SPI_XFER_TX_TIMEOUT;
+    }
+
+    for (n = 0U; (n < SPI_POLL_LIMIT) && (0U == (spi->STATUS & SPI_STATUS_RX_DATA_READY)); n++)
+    {
+    }
+    if (n == SPI_POLL_LIMIT)
+    {
+        return SPI_XFER_RX_TIMEOUT;
+    }
+
+    *rx = spi->RX_DATA;
+    return SPI_XFER_OK;
+}
+
 void spi_loopback_selftest(spi_loopback_result_t *result)
 {
-    result->frames = 0U;
-    result->errors = 0U;
-    result->first_bad_tx = 0U;
-    result->first_bad_rx = 0U;
+    *result = (spi_loopback_result_t){ 0 };
 
     /* In S-mode: MSS_SPI_init() calls PLIC_DisableIRQ(), which must use the
      * S context instead of reading mhartid (mss_plic.h). */
@@ -27,17 +76,31 @@ void spi_loopback_selftest(spi_loopback_result_t *result)
     for (uint32_t i = 0U; i < SPI_LOOPBACK_FRAMES; i++)
     {
         uint32_t tx = (i * 0x11U) & 0xFFU;
-        uint32_t rx = MSS_SPI_transfer_frame(&g_mss_spi1_lo, tx) & 0xFFU;
+        uint32_t rx = 0U;
 
         result->frames++;
-        if (rx != ((~tx) & 0xFFU))
+        switch (spi_transfer_frame_bounded(g_mss_spi1_lo.hw_reg, tx, &rx))
         {
-            if (0U == result->errors)
-            {
-                result->first_bad_tx = tx;
-                result->first_bad_rx = rx;
-            }
-            result->errors++;
+            case SPI_XFER_TX_TIMEOUT:
+                result->tx_timeouts++;
+                break;
+
+            case SPI_XFER_RX_TIMEOUT:
+                result->rx_timeouts++;
+                break;
+
+            default:
+                rx &= 0xFFU;
+                if (rx != ((~tx) & 0xFFU))
+                {
+                    if (0U == result->errors)
+                    {
+                        result->first_bad_tx = tx;
+                        result->first_bad_rx = rx;
+                    }
+                    result->errors++;
+                }
+                break;
         }
     }
     MSS_SPI_clear_slave_select(&g_mss_spi1_lo, MSS_SPI_SLAVE_0);
