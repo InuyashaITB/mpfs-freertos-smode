@@ -16,20 +16,22 @@ firmware, and a demo task that proves it works on UART1.
 
 ## 1. What already exists
 
-Sources: Renode's `platforms/cpus/polarfire-soc.repl` and the
-`renode-infrastructure` peripheral sources (master). Phase 0 re-checks
-them against SoftConsole's Renode 1.13.
+Sources: the `renode-infrastructure` peripheral sources (master), and the
+`polarfire-soc.repl` from **SoftConsole's Renode 1.13**. The repl confirms
+the controllers, addresses and PLIC lines below.
 
 | Piece | Status | Notes |
 |---|---|---|
-| MSS SPI controller | **modelled**: `spi0` (`SPI.MPFS_SPI` @ `0x20108000`, PLIC 54), `spi1` (`0x20109000`, PLIC 55) | One slave per controller (no chip-select routing); `SLAVE_SELECT` → 0 ends a transfer (`FinishTransmission`). FIFO, frame size, interrupts modelled. |
-| MSS I2C controller | **modelled**: `i2c0` (`I2C.MPFS_I2C` @ `0x2010A000`, PLIC 58), `i2c1` (`0x2010B000`, PLIC 61) | Slaves by 7-bit address. Master mode with standard status codes. Slave gets `Write(byte[])` per transaction and `Read()` one byte at a time. **Never calls `FinishTransmission`.** |
+| MSS SPI controller | **modelled (confirmed in 1.13)**: `spi0` (`SPI.MPFS_SPI` @ `0x20108000`, PLIC 54), `spi1` (`0x20109000`, PLIC 55) | One slave per controller (no chip-select routing); `SLAVE_SELECT` → 0 ends a transfer (`FinishTransmission`). FIFO, frame size, interrupts modelled. |
+| MSS I2C controller | **modelled (confirmed in 1.13)**: `i2c0` (`I2C.MPFS_I2C` @ `0x2010A000`, PLIC 58), `i2c1` (`0x2010B000`, PLIC 61) | Slaves by 7-bit address. Master mode with standard status codes. Slave gets `Write(byte[])` per transaction and `Read()` one byte at a time. **Never calls `FinishTransmission`.** |
 | SPI NOR flash device | partly | `GenericSpiFlash` / `Micron_MT25Q` exist, but page program **overwrites** (`WriteByte`); there's no 1 → 0 AND. A custom model is needed. |
 | I2C EEPROM device | **missing** | No AT24-style model. `MB85RC1MT` (FRAM, about 150 lines) is the closest reference. |
 | Custom SPI device | **missing** | By definition. |
-| Fabric soft MAC | **modelled**: `Network.LiteX_Ethernet` (LiteEth) | Slot-based TX/RX buffer window (2 + 2 slots of 2 KiB), **no DMA**, one IRQ, bit-banged MDIO to an `EthernetPhysicalLayer`. Not in the MPFS platform; we place it on a fabric (FIC) address. Note: its `Slot.TryWrite` padding looks wrong for short frames, to verify. |
+| Fabric soft MAC | **modelled in master**: `Network.LiteX_Ethernet` (LiteEth); presence in 1.13 still to check | Slot-based TX/RX buffer window (2 + 2 slots of 2 KiB), **no DMA**, one IRQ, bit-banged MDIO to an `EthernetPhysicalLayer`. Not in the MPFS platform; we place it on a fabric (FIC) address. Note: its `Slot.TryWrite` padding looks wrong for short frames, to verify. |
 | Hard MAC (for reference) | modelled (`mac0`/`mac1`, `CadenceGEM`) | Not used: you chose a fabric soft MAC. |
 | Microchip drivers | removed in `9b7725d` (cleanup); in git history | `mss_spi` (1441 lines), `mss_i2c` (1511). LiteEth has no Microchip driver; we write a small one. |
+| PLIC | `prioritiesEnabled: false` in 1.13 | Priorities are ignored in simulation; thresholds and enables still apply. |
+| Address map in 1.13 | `pcie1` ECAM occupies `0x6000_0000`–`0x7FFF_FFFF` (all of FIC0) | A fabric peripheral must go elsewhere: FIC3 `0x4000_0000` onwards is free (PCIe control regs sit at `0x5300_4000`/`0x5300_8000`). |
 | Adding models to Renode | supported | C# peripherals compile at run time: `include @renode/models/X.cs`, then `machine LoadPlatformDescription @renode/x.repl` (as we already do for the DDR repl). Restart Renode after editing a `.cs`. |
 
 ## 2. Cross-cutting work (Phase 1, before any device)
@@ -181,17 +183,21 @@ boundaries.
   plus a driver. That's several times the work; it's a later option.
 
 **Placement in the address map:**
-- Put the MAC behind a FIC window, e.g. FIC0 at `0x6000_0000`. The CSR
-  block, buffer window and MDIO block are mapped there.
+- Put the MAC behind the **FIC3** window (`0x4000_0000`–`0x5FFF_FFFF`), e.g.:
+  - CSR at `0x4000_0000`
+  - MDIO at `0x4000_1000`
+  - buffer window at `0x4001_0000`
+- Not FIC0: in SoftConsole's Renode 1.13 the `pcie1` ECAM region covers
+  `0x6000_0000`–`0x7FFF_FFFF`.
 - Its IRQ goes to a fabric→PLIC line (`F2H_n`).
 - In Renode: `eth: Network.LiteX_Ethernet @ { sysbus <csr>; sysbus new Bus.BusMultiRegistration { address: <buf>; size: <n>; region: "buffer" }; sysbus new ... "phy" }`,
   plus `IRQ -> plic@<F2H source>` and a PHY.
 
 **Library changes:**
 - **Sv39:** the library maps only gigapage 0 (`0x0000_0000`–`0x3FFF_FFFF`)
-  with an identity mapping. FIC windows (`0x4000_0000`–`0x7FFF_FFFF`) are in
-  gigapage 1, so the fabric window needs an identity mapping too: RW,
-  non-executable, from a linker-script region. This changes `sv39.c`
+  with an identity mapping. The FIC3 window (`0x4000_0000`–`0x5FFF_FFFF`) is
+  in gigapage 1, so it needs an identity mapping too: RW, non-executable,
+  from a linker-script region. This changes `sv39.c`
   (LIBRARY-FIXED mapping policy), and the mapping is useful for any fabric
   IP.
 - **FIC clock and reset:** set in the pre-hook (the HAL already turns on the
@@ -234,7 +240,7 @@ boundaries.
 
 | Phase | Work | Done when |
 |---|---|---|
-| 0 | Check SoftConsole's Renode 1.13: `MPFS_SPI`, `MPFS_I2C`, `LiteX_Ethernet` present; `include @x.cs` compiles a trivial model; TAP on Windows | Short findings note; plan adjusted |
+| 0 | Check SoftConsole's Renode 1.13. Done: `MPFS_SPI`, `MPFS_I2C`, addresses and PLIC lines (from its repl). Remaining: `LiteX_Ethernet` present; `include @x.cs` compiles a trivial model; TAP on Windows | Short findings note; plan adjusted |
 | 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode |
 | 2 | §3 SPI NOR flash | Flash demo PASS in Renode |
 | 3 | §5 I2C EEPROM | EEPROM demo PASS |
@@ -248,9 +254,10 @@ and riskiest.
 
 ## 8. Risks and open points
 
-- **Renode 1.13 vs master:** the model behaviour above was read from master.
-  SoftConsole's 1.13 may differ, or lack `MPFS_I2C`/`LiteX_Ethernet`
-  features. Phase 0 settles this; if needed, we ship our own copies of
+- **Renode 1.13 vs master:** the controllers exist in 1.13 (confirmed from
+  its repl), but their behaviour above was read from master. 1.13's
+  `MPFS_SPI`/`MPFS_I2C` may differ in detail, and `LiteX_Ethernet` is
+  unconfirmed. Phase 0 settles this; if needed, we ship our own copies of
   models in `renode/models/`.
 - **The §2.1 PLIC approach** changes vendor HAL behaviour. The alternative
   is to patch the two drivers. Decide in Phase 1.
