@@ -249,7 +249,7 @@ boundaries.
 
 | Phase | Work | Done when |
 |---|---|---|
-| 0 | **Done.** In SoftConsole's Renode 1.13: `MPFS_SPI`, `MPFS_I2C`, addresses and PLIC lines confirmed; `LiteX_Ethernet` loads; `include @x.cs` compiles (1.13 API: `Machine`); no TAP (no admin) → user-mode networking. Optional: re-run the probe model with `Machine` | Findings folded into this plan |
+| 0 | **Done.** In SoftConsole's Renode 1.13: `MPFS_SPI`, `MPFS_I2C`, addresses and PLIC lines confirmed; `LiteX_Ethernet` loads; `include @x.cs` compiles a probe model written against the 1.13 API (`Machine`), verified; no TAP (no admin) → user-mode networking | Findings folded into this plan |
 | 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode |
 | 2 | §3 SPI NOR flash | Flash demo PASS in Renode |
 | 3 | §5 I2C EEPROM | EEPROM demo PASS |
