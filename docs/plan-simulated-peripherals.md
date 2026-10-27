@@ -27,12 +27,12 @@ the controllers, addresses and PLIC lines below.
 | SPI NOR flash device | partly | `GenericSpiFlash` / `Micron_MT25Q` exist, but page program **overwrites** (`WriteByte`); there's no 1 → 0 AND. A custom model is needed. |
 | I2C EEPROM device | **missing** | No AT24-style model. `MB85RC1MT` (FRAM, about 150 lines) is the closest reference. |
 | Custom SPI device | **missing** | By definition. |
-| Fabric soft MAC | **modelled in master**: `Network.LiteX_Ethernet` (LiteEth); presence in 1.13 still to check | Slot-based TX/RX buffer window (2 + 2 slots of 2 KiB), **no DMA**, one IRQ, bit-banged MDIO to an `EthernetPhysicalLayer`. Not in the MPFS platform; we place it on a fabric (FIC) address. Note: its `Slot.TryWrite` padding looks wrong for short frames, to verify. |
+| Fabric soft MAC | **modelled (confirmed in 1.13)**: `Network.LiteX_Ethernet` (LiteEth) | Slot-based TX/RX buffer window (2 + 2 slots of 2 KiB), **no DMA**, one IRQ, bit-banged MDIO to an `EthernetPhysicalLayer`. Not in the MPFS platform; we place it on a fabric (FIC) address. Note: its `Slot.TryWrite` padding looks wrong for short frames, to verify. |
 | Hard MAC (for reference) | modelled (`mac0`/`mac1`, `CadenceGEM`) | Not used: you chose a fabric soft MAC. |
 | Microchip drivers | removed in `9b7725d` (cleanup); in git history | `mss_spi` (1441 lines), `mss_i2c` (1511). LiteEth has no Microchip driver; we write a small one. |
 | PLIC | `prioritiesEnabled: false` in 1.13 | Priorities are ignored in simulation; thresholds and enables still apply. |
 | Address map in 1.13 | `pcie1` ECAM occupies `0x6000_0000`–`0x7FFF_FFFF` (all of FIC0) | A fabric peripheral must go elsewhere: FIC3 `0x4000_0000` onwards is free (PCIe control regs sit at `0x5300_4000`/`0x5300_8000`). |
-| Adding models to Renode | supported | C# peripherals compile at run time: `include @renode/models/X.cs`, then `machine LoadPlatformDescription @renode/x.repl` (as we already do for the DDR repl). Restart Renode after editing a `.cs`. |
+| Adding models to Renode | **supported (confirmed in 1.13)** | C# peripherals compile at run time: `include @renode/models/X.cs`, then `machine LoadPlatformDescription @renode/x.repl` (as we already do for the DDR repl). Restart Renode after editing a `.cs`. Models must target the **1.13 API**: e.g. `Machine`, not master's `IMachine`, and the older register/collection helpers. Master's sources are a reference, not drop-in code. |
 
 ## 2. Cross-cutting work (Phase 1, before any device)
 
@@ -221,13 +221,22 @@ boundaries.
     `xSendEventStructToIPTask`.
   - Link status.
   - Uses `BufferAllocation_2`, buffers in DDR (§2.4).
-- Renode networking: `emulation CreateSwitch "sw"`, then `connector
-  Connect eth sw`.
-  - **Host access (option A):** a TAP (`emulation CreateTap`). On Windows
-    this needs a TAP driver (OpenVPN TAP-Windows) and admin rights.
-  - **Host access (option B):** a second emulated machine on the switch as
-    a test peer, or Renode's network server (newer Renode only).
-  - Phase 0 checks what Renode 1.13 on Windows supports.
+- Renode networking is **user-mode only**: no TAP, since that needs
+  administrator rights and a driver, which some platforms can't have.
+  - **Test setup:** two simulated boards (`mach create` twice, same platform
+    and repls) on one `emulation CreateSwitch "sw"`, each `connector
+    Connect eth sw`, running the **same demo ELF**.
+    - A GPIO2 input "strap", set per machine in the `.resc`, selects the
+      role (TCP echo server or client).
+    - The MAC and IP address are derived from the same strap.
+    - This proves FreeRTOS+TCP end to end with no host privileges.
+    - The SoftConsole launcher debugs machine 0; machine 1 runs free.
+  - **Optional host access without admin:** a small C# `SocketBridge`
+    model (`IMACInterface`) on the switch.
+    - It tunnels raw Ethernet frames over an ordinary localhost TCP/UDP
+      socket to a user-mode host helper (Python).
+    - The helper starts with ARP/ICMP/UDP echo, and can grow to a
+      pure-Python TCP/IP stack if host TCP is wanted.
 
 **Demo:**
 - Static IP (DHCP optional).
@@ -240,13 +249,14 @@ boundaries.
 
 | Phase | Work | Done when |
 |---|---|---|
-| 0 | Check SoftConsole's Renode 1.13. Done: `MPFS_SPI`, `MPFS_I2C`, addresses and PLIC lines (from its repl). Remaining: `LiteX_Ethernet` present; `include @x.cs` compiles a trivial model; TAP on Windows | Short findings note; plan adjusted |
+| 0 | **Done.** In SoftConsole's Renode 1.13: `MPFS_SPI`, `MPFS_I2C`, addresses and PLIC lines confirmed; `LiteX_Ethernet` loads; `include @x.cs` compiles (1.13 API: `Machine`); no TAP (no admin) → user-mode networking. Optional: re-run the probe model with `Machine` | Findings folded into this plan |
 | 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode |
 | 2 | §3 SPI NOR flash | Flash demo PASS in Renode |
 | 3 | §5 I2C EEPROM | EEPROM demo PASS |
 | 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event |
-| 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames seen by the peer |
-| 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo work |
+| 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames exchanged between the two simulated boards |
+| 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo between board 0 and board 1 |
+| 5c | *(optional)* `SocketBridge` model + user-mode host helper | Host helper answers ARP/ping from a board |
 | 6 | Docs (README, boot doc), Robot tests, LIBRARY-FIXED marking | Tests green; docs updated |
 
 Phases 2–4 are independent once Phase 1 is done. Phase 5 is the largest
@@ -267,6 +277,12 @@ and riskiest.
 - **Real hardware for the soft MAC:** this needs a Libero design with LiteEth
   (or CoreTSE) on a FIC, and regenerated `fpga_design_config` headers.
   Simulation-only in this plan.
-- **Windows host networking** through TAP needs admin rights and a driver.
+- **No TAP** (no administrator rights). Host access exists only through
+  the optional `SocketBridge` (5c); the main tests run between two
+  simulated boards.
+- **Two machines** roughly double the simulation load, so the TCP tests
+  run slower in Renode.
+- **1.13 API drift** for our C# models: keep them small and
+  self-contained, and test each with `include` in 1.13 early.
 - **`LiteX_Ethernet` short-frame padding** looks suspicious. We may need a
   model subclass, or the driver can pad frames to 60 bytes itself.
