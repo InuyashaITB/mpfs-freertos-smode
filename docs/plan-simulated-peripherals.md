@@ -1,0 +1,265 @@
+# Plan: simulated peripherals (branch `sim-peripherals`)
+
+Goal: find out, and then build, what it takes to add simulated peripherals to
+this project. The project runs FreeRTOS in S-mode on U54_1 with Sv39, in
+Renode. Four targets:
+
+1. **SPI NOR flash** on an MSS SPI controller. True NOR semantics: program
+   only clears bits (1 → 0); erase sets a sector back to all 1s.
+2. **Custom SPI device** with its own request parsing and responses
+   (bidirectional).
+3. **I2C EEPROM** on an MSS I2C controller.
+4. **Fabric soft MAC** with **FreeRTOS+TCP**.
+
+Each target is split into a Renode model (the device), a driver in the
+firmware, and a demo task that proves it works on UART1.
+
+## 1. What already exists
+
+Sources: Renode's `platforms/cpus/polarfire-soc.repl` and the
+`renode-infrastructure` peripheral sources (master). Phase 0 re-checks
+them against SoftConsole's Renode 1.13.
+
+| Piece | Status | Notes |
+|---|---|---|
+| MSS SPI controller | **modelled**: `spi0` (`SPI.MPFS_SPI` @ `0x20108000`, PLIC 54), `spi1` (`0x20109000`, PLIC 55) | One slave per controller (no chip-select routing); `SLAVE_SELECT` → 0 ends a transfer (`FinishTransmission`). FIFO, frame size, interrupts modelled. |
+| MSS I2C controller | **modelled**: `i2c0` (`I2C.MPFS_I2C` @ `0x2010A000`, PLIC 58), `i2c1` (`0x2010B000`, PLIC 61) | Slaves by 7-bit address. Master mode with standard status codes. Slave gets `Write(byte[])` per transaction and `Read()` one byte at a time. **Never calls `FinishTransmission`.** |
+| SPI NOR flash device | partly | `GenericSpiFlash` / `Micron_MT25Q` exist, but page program **overwrites** (`WriteByte`); there's no 1 → 0 AND. A custom model is needed. |
+| I2C EEPROM device | **missing** | No AT24-style model. `MB85RC1MT` (FRAM, about 150 lines) is the closest reference. |
+| Custom SPI device | **missing** | By definition. |
+| Fabric soft MAC | **modelled**: `Network.LiteX_Ethernet` (LiteEth) | Slot-based TX/RX buffer window (2 + 2 slots of 2 KiB), **no DMA**, one IRQ, bit-banged MDIO to an `EthernetPhysicalLayer`. Not in the MPFS platform; we place it on a fabric (FIC) address. Note: its `Slot.TryWrite` padding looks wrong for short frames, to verify. |
+| Hard MAC (for reference) | modelled (`mac0`/`mac1`, `CadenceGEM`) | Not used: you chose a fabric soft MAC. |
+| Microchip drivers | removed in `9b7725d` (cleanup); in git history | `mss_spi` (1441 lines), `mss_i2c` (1511). LiteEth has no Microchip driver; we write a small one. |
+| Adding models to Renode | supported | C# peripherals compile at run time: `include @renode/models/X.cs`, then `machine LoadPlatformDescription @renode/x.repl` (as we already do for the DDR repl). Restart Renode after editing a `.cs`. |
+
+## 2. Cross-cutting work (Phase 1, before any device)
+
+### 2.1 S-mode and the HAL PLIC functions (blocker)
+
+`mss_spi.c` and `mss_i2c.c` call the HAL's `PLIC_EnableIRQ` /
+`PLIC_DisableIRQ` (inline in `mss_plic.h`), including inside `*_init()`.
+These read `mhartid`, which is an **illegal instruction in S-mode**.
+
+The fix belongs in the library, not in each driver. `mss_plic.h` picks
+the PLIC context from `mhartid`; it will instead ask a helper that answers
+"hart 1 S-context" once `m_shim_enter_smode()` has run. The shim sets a flag
+right before `mret`; before that, M-mode code keeps the M context. Drivers
+then work unchanged from both `smode_m_prehook()` and S-mode tasks.
+- Touches: `mss_plic.h` (vendor HAL, in `src/platform`, not middleware),
+  `m_shim.c`.
+- This changes LIBRARY-FIXED behaviour, so it gets documented.
+- `PLIC_SetPriority` has no hart dependency; claim/complete already go
+  through `SPLIC_*`.
+
+### 2.2 Drivers and build
+
+- Restore `src/platform/drivers/mss/mss_spi` and `mss_i2c` from `9b7725d^`.
+- Add both to the default `MPFS_DRIVERS` (make and CMake).
+- Clocks and resets for SPI0/1, I2C0/1 and the FIC go in the demo's
+  `smode_m_prehook()` (`mss_config_clk_rst`, M-mode).
+- PLIC sources are enabled from S-mode in `s_mode_main()`.
+
+### 2.3 Renode project layout
+
+```
+renode/models/NorFlash.cs         SPI NOR flash with AND-programming
+renode/models/ProtoSpiDevice.cs   custom request/response SPI device
+renode/models/I2CEeprom.cs        AT24C256-like EEPROM
+renode/mpfs-sim-peripherals.repl  attaches them (+ the LiteEth MAC, PHY, switch)
+renode/mpfs-sim-peripherals.resc  include @models/*.cs; LoadPlatformDescription; networking
+```
+
+- The launcher's "other init commands" gain the `include` lines, next to
+  the existing DDR repl.
+- Optional: Renode Robot Framework tests (`renode-test`) that boot the demo
+  and check UART1 lines, one per peripheral.
+
+### 2.4 Memory budget
+
+L2LIM is 255 KiB. The demo today uses about 57 KiB of code and 108 KiB of
+`.bss`, including the 32 KiB FreeRTOS heap and the stacks.
+- Flash, EEPROM and the SPI device add little.
+- **FreeRTOS+TCP will not fit next to that.** Plan to move the FreeRTOS
+  heap and the network buffers into the DDR window, which is already mapped
+  RW. With a no-DMA MAC, buffers there need no address translation. This
+  changes `FreeRTOSConfig.h` (heap placement; LIBRARY-FIXED) and adds a
+  DDR section to the linker layout. Prefer `configAPPLICATION_ALLOCATED_HEAP`
+  with an app-provided `ucHeap` in a DDR section, or `heap_5` regions.
+
+## 3. Feature: SPI NOR flash (`spi0`)
+
+**Renode model `NorFlash : ISPIPeripheral`** (C#, about 250 lines,
+modelled on `GenericSpiFlash`):
+- **Commands:** `0x9F` JEDEC ID, `0x05` RDSR, `0x06` WREN, `0x04` WRDI,
+  `0x03` READ, `0x0B` FAST_READ.
+- **`0x02` PAGE PROGRAM:** `mem[a] &= data` (1 → 0 only); 256-byte page
+  wrap; needs WEL.
+- **Erase:** `0x20` 4 KiB sector, `0xD8` 64 KiB block, `0xC7` chip. Each
+  sets bytes to `0xFF`.
+- **Busy (WIP):** optional, for a number of virtual microseconds, so
+  drivers must poll RDSR.
+- **Backing store:** a `MappedMemory`, optionally file-backed so contents
+  survive a restart.
+- **Command boundary:** `FinishTransmission()`, i.e. the master releasing
+  slave-select.
+- **Attach:** `spiFlash: SPI.NorFlash @ spi0` (single slave).
+
+**Firmware (app):** `spi_flash.c` on `MSS_SPI`, master, mode 0, 8-bit
+frames.
+- Each command is wrapped in `MSS_SPI_set_slave_select` /
+  `MSS_SPI_clear_slave_select`.
+- API: `read`, `program` (page-split), `erase_sector`, `wait_ready`,
+  `read_id`.
+
+**Demo task:**
+1. Read the ID.
+2. Erase sector 0 → all `0xFF`.
+3. Program `0xA5`, then program `0x5A` over it → reads `0x00` (bits only
+   clear).
+4. Erase → `0xFF` again.
+5. Print PASS/FAIL per step.
+
+## 4. Feature: custom bidirectional SPI device (`spi1`)
+
+**Example protocol** (half-duplex frames, master-clocked):
+- **Request:** `0xA5 | cmd | len | payload[len] | crc8`.
+- **Response:** the device holds an internal response buffer. The master
+  clocks `0x00`s until it sees `0x5A`, then reads
+  `status | len | payload | crc8`.
+- **Commands:** `PING`, `ECHO`, `READ_REG(addr)`, `WRITE_REG(addr,val)`,
+  `GET_EVENTS`.
+- **Errors:** bad CRC or an unknown command answers `NAK` with a reason.
+- **Data-ready line (optional):** the model raises a GPIO output when it
+  has unsolicited events. It's wired to a GPIO2 input or an F2H PLIC line,
+  so the app can be interrupt-driven.
+
+**Renode model `ProtoSpiDevice : ISPIPeripheral`** (C#):
+- A byte-wise parser state machine and a register file.
+- Monitor commands to poke it from Renode (`spi1.proto InjectEvent 3`,
+  `SetRegister`), for scripted tests.
+
+**Firmware:** `proto_dev.c`, which frames requests, computes CRC8, polls
+for the response marker with a timeout, and validates the response. The
+demo task exercises each command and one deliberate bad-CRC request.
+
+## 5. Feature: I2C EEPROM (`i2c0`)
+
+**Renode model `I2CEeprom : II2CPeripheral`** (AT24C256-like: 32 KiB,
+64-byte pages, 2-byte address):
+- **Write:** each `Write(byte[])` is one transaction. The first two bytes
+  set the address pointer; the rest are written with **page wrap** inside
+  the 64-byte page.
+- **Read:** `Read()` returns one byte at a time and auto-increments across
+  the whole array. Current-address read is supported; a "random read" is a
+  2-byte write followed by reads.
+- `MPFS_I2C` never calls `FinishTransmission`, so the model relies only on
+  `Write`/`Read`.
+- **Optional:** write-cycle busy, where the device NAKs its address for
+  about 5 ms of virtual time, for ACK polling; a WP input.
+- **Attach:** `eeprom: I2C.I2CEeprom @ i2c0 0x50`.
+
+**Firmware:** `eeprom.c` on `MSS_I2C` as master, interrupt-driven. This
+needs the §2.1 PLIC fix, or polled mode as a fallback. It uses
+`MSS_I2C_write_read` for random reads and splits writes on page
+boundaries.
+
+**Demo:**
+1. Write a block that crosses a page boundary. Done raw in one transaction
+   to show the wrap, then correctly split.
+2. Read back and print the results.
+
+## 6. Feature: fabric soft MAC + FreeRTOS+TCP
+
+**MAC choice (recommended): LiteEth.**
+- Renode already has `LiteX_Ethernet`, and LiteEth can be generated for
+  PolarFire fabric.
+- With no DMA, the virtual/physical address issue (the MSS GEM driver
+  truncates buffer addresses to 32 bits) doesn't exist.
+- **Alternative:** Microchip **CoreTSE**. It is the "native" Libero soft
+  MAC, but Renode has no model for it, so it would need a register-level
+  C# model written from the CoreTSE handbook (DMA descriptors included)
+  plus a driver. That's several times the work; it's a later option.
+
+**Placement in the address map:**
+- Put the MAC behind a FIC window, e.g. FIC0 at `0x6000_0000`. The CSR
+  block, buffer window and MDIO block are mapped there.
+- Its IRQ goes to a fabric→PLIC line (`F2H_n`).
+- In Renode: `eth: Network.LiteX_Ethernet @ { sysbus <csr>; sysbus new Bus.BusMultiRegistration { address: <buf>; size: <n>; region: "buffer" }; sysbus new ... "phy" }`,
+  plus `IRQ -> plic@<F2H source>` and a PHY.
+
+**Library changes:**
+- **Sv39:** the library maps only gigapage 0 (`0x0000_0000`–`0x3FFF_FFFF`)
+  with an identity mapping. FIC windows (`0x4000_0000`–`0x7FFF_FFFF`) are in
+  gigapage 1, so the fabric window needs an identity mapping too: RW,
+  non-executable, from a linker-script region. This changes `sv39.c`
+  (LIBRARY-FIXED mapping policy), and the mapping is useful for any fabric
+  IP.
+- **FIC clock and reset:** set in the pre-hook (the HAL already turns on the
+  FIC0–3 clocks in standalone mode).
+
+**FreeRTOS+TCP (new library, as you chose):**
+- Vendor `FreeRTOS-Plus-TCP` (a release compatible with Kernel V11.3.2)
+  into `src/middleware/FreeRTOS-Plus-TCP`. It sits next to `FreeRTOS-Kernel`,
+  which is not touched.
+- New `libfreertos_tcp.a` in make and CMake, plus a
+  `MpfsSmode::freertos_tcp` target and `MPFS_SMODE_TCP_LIBS`.
+- `FreeRTOSIPConfig.h` from `FREERTOS_IP_CONFIG_DIR`, marked
+  **LIBRARY-FIXED**, installed and recorded in `build_config` like
+  `FreeRTOSConfig.h`.
+- **NetworkInterface for LiteEth** (new, in the library):
+  - `xNetworkInterfaceInitialise`: MDIO PHY reset and link.
+  - `xNetworkInterfaceOutput`: copy into a free read slot, set the length,
+    start.
+  - RX: the IRQ defers to a task (`vSmodeYieldFromISR`), which copies the
+    slot into a network buffer, acks the slot and calls
+    `xSendEventStructToIPTask`.
+  - Link status.
+  - Uses `BufferAllocation_2`, buffers in DDR (§2.4).
+- Renode networking: `emulation CreateSwitch "sw"`, then `connector
+  Connect eth sw`.
+  - **Host access (option A):** a TAP (`emulation CreateTap`). On Windows
+    this needs a TAP driver (OpenVPN TAP-Windows) and admin rights.
+  - **Host access (option B):** a second emulated machine on the switch as
+    a test peer, or Renode's network server (newer Renode only).
+  - Phase 0 checks what Renode 1.13 on Windows supports.
+
+**Demo:**
+- Static IP (DHCP optional).
+- ICMP ping reply.
+- TCP echo server on port 7, plus a small TCP client task that connects to
+  the peer.
+- Link and IP stats on the console.
+
+## 7. Phases
+
+| Phase | Work | Done when |
+|---|---|---|
+| 0 | Check SoftConsole's Renode 1.13: `MPFS_SPI`, `MPFS_I2C`, `LiteX_Ethernet` present; `include @x.cs` compiles a trivial model; TAP on Windows | Short findings note; plan adjusted |
+| 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode |
+| 2 | §3 SPI NOR flash | Flash demo PASS in Renode |
+| 3 | §5 I2C EEPROM | EEPROM demo PASS |
+| 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event |
+| 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames seen by the peer |
+| 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo work |
+| 6 | Docs (README, boot doc), Robot tests, LIBRARY-FIXED marking | Tests green; docs updated |
+
+Phases 2–4 are independent once Phase 1 is done. Phase 5 is the largest
+and riskiest.
+
+## 8. Risks and open points
+
+- **Renode 1.13 vs master:** the model behaviour above was read from master.
+  SoftConsole's 1.13 may differ, or lack `MPFS_I2C`/`LiteX_Ethernet`
+  features. Phase 0 settles this; if needed, we ship our own copies of
+  models in `renode/models/`.
+- **The §2.1 PLIC approach** changes vendor HAL behaviour. The alternative
+  is to patch the two drivers. Decide in Phase 1.
+- **L2LIM capacity** for TCP: heap and buffers move to DDR. On real
+  hardware that needs DDR training (`DDR_SUPPORT`), not done in LIM
+  standalone mode today.
+- **Real hardware for the soft MAC:** this needs a Libero design with LiteEth
+  (or CoreTSE) on a FIC, and regenerated `fpga_design_config` headers.
+  Simulation-only in this plan.
+- **Windows host networking** through TAP needs admin rights and a driver.
+- **`LiteX_Ethernet` short-frame padding** looks suspicious. We may need a
+  model subclass, or the driver can pad frames to 60 bytes itself.
