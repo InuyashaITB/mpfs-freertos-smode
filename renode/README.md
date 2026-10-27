@@ -5,6 +5,9 @@
 | `mpfs-ddr-38bit-cached-3gib.repl` | Adds 2 GiB of DDR at `0x10_4000_0000` for the Sv39 DDR window |
 | `mpfs-sim-peripherals.repl` | Simulated devices on the MSS SPI/I2C controllers |
 | `models/*.cs` | C# device models, compiled by Renode at run time |
+| `run-demo.resc` | Loads the board and devices as the launcher does, runs the demo without a debugger, MMUART1 to a file |
+| `expected-uart.txt` | Lines the UART output must contain (one per self-test) |
+| `check-uart.sh` | Checks a UART log against `expected-uart.txt` (POSIX sh / busybox sh) |
 
 Models are written against the **Renode 1.13** API (SoftConsole v2022.2):
 `Machine`, not the newer `IMachine`. Renode compiles a model when it is
@@ -19,6 +22,53 @@ include @renode/models/SpiLoopback.cs
 include @renode/models/NorFlash.cs
 machine LoadPlatformDescription @renode/mpfs-sim-peripherals.repl
 ```
+
+## Headless run: `make sim`
+
+Builds, runs the demo in Renode with no windows and no debugger, and checks
+UART1. From the project root, in the same shell you build from (SoftConsole's
+`build_tools\bin` on `PATH` on Windows):
+
+```
+make sim RENODE=C:/Microchip/SoftConsole-v2022.2-RISC-V-747/<renode dir>/Renode.exe
+```
+
+`RENODE` can also be set in the environment. Forward slashes avoid quoting
+problems.
+
+* **Outputs (`build/sim/`):** `uart1.txt` is MMUART1. `renode.log` is
+  Renode's console, including the model counters printed at the end.
+* **Result:** `check-uart: PASS (N expected lines found ...)`, or a `FAIL`
+  line for each problem, and make stops with an error. The check fails if:
+  * UART1 is empty (Renode did not start or a script command failed: see
+    `renode.log`);
+  * a line contains `FAIL` or `no response`, or starts with `*** ` (a fault
+    report from the libraries);
+  * a line of `expected-uart.txt` is missing.
+* **Options:**
+  * `SIM_TIME=10`: emulated seconds; the default 3 takes about 20 s real time.
+  * `RENODE_FLAGS=...`: default `--disable-xwt --console`.
+* **New self-test:** add its PASS line to `expected-uart.txt`; a new model
+  also goes into `run-demo.resc` (`include`) and the launcher.
+
+Renode 1.13 notes, which explain how the script is written:
+* The UART file must be an absolute path. A relative one fails with "could
+  not be created", so make passes `$(CURDIR)/build/sim/uart1.txt`.
+* `$ORIGIN` is not expanded inside paths. So the script's other paths are
+  relative to the working directory, and make runs Renode in the project
+  root.
+* If a script command fails, Renode stops the script and waits at its
+  prompt. make gives it end-of-file on stdin, so it exits instead of hanging.
+
+By hand (Renode started in the project root, e.g. from its monitor window):
+
+```
+$uart_log=@C:/path/to/uart1.txt
+include @renode/run-demo.resc
+```
+
+Tested with the Linux build of Renode 1.13.1. On Windows, if Renode rejects
+`--console`, try `make sim RENODE=... RENODE_FLAGS=--disable-xwt`.
 
 ## Checking that the models loaded
 

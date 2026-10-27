@@ -113,6 +113,7 @@ make                        # library, then the demo
 make libs                   # library + install tree only (= make -C src FREERTOS_CONFIG_DIR=../examples/freertos-demo)
 make install PREFIX=dist    # copy the install tree to dist/ (any path, e.g. C:/mpfs-smode)
 make clean                  # remove build/
+make sim RENODE=<Renode>    # build, run the demo headless in Renode, check UART1 (renode/README.md)
 ```
 
 Each also works on its own:
@@ -420,6 +421,7 @@ with `SMODE_HART` (checked at build time).
 | `examples/freertos-demo/periph_selftest.*` | Self-tests run before the scheduler: SPI1 loopback, SPI0 NOR flash |
 | `examples/freertos-demo/spi_flash.*` | Minimal SPI NOR flash driver on `MSS_SPI` (bounded, one transfer per command) |
 | `renode/mpfs-ddr-38bit-cached-3gib.repl` | *(mmu-sv39)* Adds 2 GiB of DDR to Renode's platform |
+| `renode/run-demo.resc`, `renode/check-uart.sh`, `renode/expected-uart.txt` | Headless run of the demo and the PASS/FAIL check behind `make sim` |
 | `renode/mpfs-sim-peripherals.repl`, `renode/models/*.cs` | Simulated devices on the MSS SPI/I2C controllers and their C# models (see `renode/README.md`) |
 | `.cproject` | One configuration (LIM-Debug), Makefile project calling the top-level `Makefile`; include paths kept for the indexer |
 | `*.launch` | The two Renode launchers, renamed for this project. *(mmu-sv39)* PC = `0x08000000`, stop at `s_mode_main`, load the DDR repl, the device models and `mpfs-sim-peripherals.repl`; ELF = `build/examples/freertos-demo/freertos-demo.elf` |

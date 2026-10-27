@@ -424,3 +424,15 @@ The model's counters agree: 4 page programs, 2 erases, 0 ignored commands.
 - **Noise:** each transfer logs `spi0: Unhandled write ... SPS, CLKMODE` and
   `offset 0x50` (FRAMESUP) warnings. They are harmless and noted in the
   Renode README.
+
+## Headless run (`make sim`)
+
+Added after Phase 2, so every later phase has a one-command check:
+- `renode/run-demo.resc` loads the board and devices as the launcher does,
+  runs the demo and writes MMUART1 to `build/sim/uart1.txt`.
+- `renode/check-uart.sh` fails on `FAIL`, `no response` or a `*** ` fault
+  report, and on any line of `renode/expected-uart.txt` that is missing.
+
+Usage and Renode 1.13 quirks are in `renode/README.md`. Phases 3–5 are done
+when their PASS line is in `expected-uart.txt` and `make sim` passes. It is
+also the base for Phase 6's tests.

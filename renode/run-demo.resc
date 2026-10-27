@@ -1,0 +1,54 @@
+:name: mpfs-freertos-smode demo (headless)
+:description: Loads the board and the simulated devices as the debug launcher does, runs the demo without a debugger and writes MMUART1 to a file.
+
+# Normally run by 'make sim' (top-level Makefile), which also checks the
+# output. By hand, with Renode started in the project root:
+#
+#   renode --disable-xwt --console -e "$uart_log=@/abs/path/uart1.txt; include @renode/run-demo.resc"
+#
+# Variables (set them before the include):
+#   $uart_log   MMUART1 output file. Must be an absolute path: Renode 1.13
+#               does not resolve a relative one against the working directory.
+#   $elf        the program (default: the demo the top-level make builds)
+#   $runtime    emulated seconds before quitting (default "3")
+#
+# Every other path here is relative to the working directory, so start Renode
+# in the project root ($ORIGIN is not expanded inside paths in 1.13).
+
+$elf?=@build/examples/freertos-demo/freertos-demo.elf
+$runtime?="3"
+
+using sysbus
+mach create
+machine LoadPlatformDescription @platforms/cpus/polarfire-soc.repl
+machine LoadPlatformDescription @renode/mpfs-ddr-38bit-cached-3gib.repl
+include @renode/models/SpiLoopback.cs
+include @renode/models/NorFlash.cs
+machine LoadPlatformDescription @renode/mpfs-sim-peripherals.repl
+
+# The MPFS_SPI model does not implement the SPS/CLKMODE bits or FRAMESUP and
+# warns on every transfer; harmless (see renode/README.md).
+logLevel 3 spi0
+logLevel 3 spi1
+
+# LoadELF uses the physical (load) addresses. Every hart starts at the
+# physical reset vector, as the debug launcher does with 'set $pc'.
+sysbus LoadELF $elf
+e51 PC 0x08000000
+u54_1 PC 0x08000000
+u54_2 PC 0x08000000
+u54_3 PC 0x08000000
+u54_4 PC 0x08000000
+
+mmuart1 CreateFileBackend $uart_log true
+
+echo "run-demo: running (emulated seconds:)"
+echo $runtime
+emulation RunFor $runtime
+
+echo "run-demo: spi0.flash programs, erases, ignored commands:"
+spi0.flash Programs
+spi0.flash Erases
+spi0.flash IgnoredCommands
+echo "run-demo: done"
+quit
