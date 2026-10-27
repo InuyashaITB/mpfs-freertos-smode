@@ -353,3 +353,14 @@ RX ready 16)`.**
   in Renode 1.13 as is; `MSS_SPI_transfer_block()` (which watches the FIFO
   flags) is the one to check for the flash and protocol drivers.
 
+**Debugger not staying attached.**
+- **Symptom:** the launch loaded and started the program, then the session
+  ended ("Remote doesn't know how to detach"); no pause or breakpoints.
+- **Cause:** the launcher's "Load symbols" step (`symbol-file`) runs after
+  connecting, at a physical PC with only virtual symbols. gdb 9.1 fails with
+  "Argument to arithmetic operation not a number or boolean", and Eclipse
+  aborts the launch.
+- **Fix:** "Load symbols" and semihosting turned off in
+  `mpfs-freertos-smode Renode All-harts Debug.launch`. The symbols still come
+  from the `file` command in "Other gdb client commands". README "Debugging
+  notes" explains both.

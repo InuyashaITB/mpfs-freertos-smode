@@ -552,6 +552,18 @@ never land inside it. That is the only time `spin` can block.
   from the physical copy, so its breakpoints must be physical: load a second
   copy of the symbols shifted down, e.g. in the gdb console
   `add-symbol-file build/examples/freertos-demo/freertos-demo.elf -o -0xffffffc000000000`, or use `break *0x0800xxxx`.
+* Keep "Load symbols" off in the Renode launcher (Startup tab). The symbols
+  come from the `file …/freertos-demo.elf` command in "Other gdb client
+  commands", which runs before connecting. With "Load symbols" on, Eclipse
+  issues `symbol-file` after connecting, while the harts are stopped at a
+  physical PC and every symbol is virtual. gdb 9.1 (SoftConsole) then fails
+  with "Argument to arithmetic operation not a number or boolean", and
+  Eclipse ends the session right after `load` ("Remote doesn't know how to
+  detach"). Semihosting is off too: Renode has no `monitor arm semihosting`.
+* `LoadPlatformDescription … already defined` in the gdb console means the
+  launch reused a Renode instance from a previous session, so the repls were
+  loaded twice. Stop Renode and start the launch group again for a clean
+  platform.
 * Renode macros from `macros.resc` work as before, e.g. `runMacro $MCsrU54_1`.
 * If `vTaskDelay()` returns immediately, or the hart spins in
   `vListInsert()` with `xTickCount` stuck, the yield is not being taken:
