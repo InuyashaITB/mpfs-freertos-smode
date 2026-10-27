@@ -17,7 +17,9 @@ typedef struct
     uint32_t frames;        /* frames attempted */
     uint32_t errors;        /* replies that were not the complement */
     uint32_t tx_timeouts;   /* frames where STATUS.TX_DONE never came */
-    uint32_t rx_timeouts;   /* frames where STATUS.RX_DATA_READY never came */
+    uint32_t rx_timeouts;   /* frames where the RX FIFO stayed empty */
+    uint32_t rx_ready_flags;/* frames where STATUS.RX_DATA_READY was also set
+                             * (0 in Renode 1.13: see periph_selftest.c) */
     uint32_t first_bad_tx;  /* first wrong reply: sent ... */
     uint32_t first_bad_rx;  /* ... and received */
 } spi_loopback_result_t;

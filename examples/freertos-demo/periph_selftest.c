@@ -17,6 +17,7 @@
 /* MSS SPI register bits (the same values mss_spi.c uses privately). */
 #define SPI_STATUS_TX_DONE          (0x00000001U)
 #define SPI_STATUS_RX_DATA_READY    (0x00000002U)
+#define SPI_STATUS_RX_FIFO_EMPTY    (0x00000040U)
 #define SPI_CMD_RX_FIFO_RESET       (0x00000004U)
 #define SPI_CMD_TX_FIFO_RESET       (0x00000008U)
 #define SPI_CTRL_TXRXDFCOUNT_MASK   (0x00FFFF00U)
@@ -30,8 +31,15 @@ typedef enum
 } spi_xfer_status_t;
 
 /* One full-duplex frame, as MSS_SPI_transfer_frame() does it, but with both
- * waits bounded. */
-static spi_xfer_status_t spi_transfer_frame_bounded(SPI_TypeDef *spi, uint32_t tx, uint32_t *rx)
+ * waits bounded, and waiting for "RX FIFO not empty" rather than
+ * STATUS.RX_DATA_READY. Renode's MPFS_SPI sets RX_DATA_READY (its RXDATRCVD)
+ * only when the received byte count is a multiple of the frame size in bits,
+ * i.e. every 8 bytes for 8-bit frames, and each frame here starts with a FIFO
+ * flush, so it never comes. RX_FIFO_EMPTY follows the FIFO directly, and
+ * waiting for it to clear is as valid on hardware. *rx_ready_seen records
+ * whether RX_DATA_READY was set as well. */
+static spi_xfer_status_t spi_transfer_frame_bounded(SPI_TypeDef *spi, uint32_t tx, uint32_t *rx,
+                                                    uint32_t *rx_ready_seen)
 {
     uint32_t n;
 
@@ -50,7 +58,7 @@ static spi_xfer_status_t spi_transfer_frame_bounded(SPI_TypeDef *spi, uint32_t t
         return SPI_XFER_TX_TIMEOUT;
     }
 
-    for (n = 0U; (n < SPI_POLL_LIMIT) && (0U == (spi->STATUS & SPI_STATUS_RX_DATA_READY)); n++)
+    for (n = 0U; (n < SPI_POLL_LIMIT) && (0U != (spi->STATUS & SPI_STATUS_RX_FIFO_EMPTY)); n++)
     {
     }
     if (n == SPI_POLL_LIMIT)
@@ -58,6 +66,7 @@ static spi_xfer_status_t spi_transfer_frame_bounded(SPI_TypeDef *spi, uint32_t t
         return SPI_XFER_RX_TIMEOUT;
     }
 
+    *rx_ready_seen = (0U != (spi->STATUS & SPI_STATUS_RX_DATA_READY)) ? 1U : 0U;
     *rx = spi->RX_DATA;
     return SPI_XFER_OK;
 }
@@ -77,9 +86,10 @@ void spi_loopback_selftest(spi_loopback_result_t *result)
     {
         uint32_t tx = (i * 0x11U) & 0xFFU;
         uint32_t rx = 0U;
+        uint32_t rx_ready_seen = 0U;
 
         result->frames++;
-        switch (spi_transfer_frame_bounded(g_mss_spi1_lo.hw_reg, tx, &rx))
+        switch (spi_transfer_frame_bounded(g_mss_spi1_lo.hw_reg, tx, &rx, &rx_ready_seen))
         {
             case SPI_XFER_TX_TIMEOUT:
                 result->tx_timeouts++;
@@ -90,6 +100,7 @@ void spi_loopback_selftest(spi_loopback_result_t *result)
                 break;
 
             default:
+                result->rx_ready_flags += rx_ready_seen;
                 rx &= 0xFFU;
                 if (rx != ((~tx) & 0xFFU))
                 {

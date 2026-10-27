@@ -697,7 +697,7 @@ void s_mode_main(void)
         if ((0U != r.tx_timeouts) || (0U != r.rx_timeouts))
         {
             prvPrintf("[S] SPI1 loopback: no response, %lu of %lu frames timed out "
-                      "(TX done %lu, RX ready %lu). Is the Renode model attached? "
+                      "(TX done %lu, RX data %lu). Is the Renode model attached? "
                       "See renode/README.md\r\n",
                       (unsigned long)(r.tx_timeouts + r.rx_timeouts), (unsigned long)r.frames,
                       (unsigned long)r.tx_timeouts, (unsigned long)r.rx_timeouts);
@@ -711,8 +711,9 @@ void s_mode_main(void)
         }
         if ((0U == r.errors) && (0U == r.tx_timeouts) && (0U == r.rx_timeouts))
         {
-            prvPrintf("[S] SPI1 loopback (S-mode, MSS_SPI driver): %lu frames OK\r\n",
-                      (unsigned long)r.frames);
+            prvPrintf("[S] SPI1 loopback (S-mode, MSS_SPI driver): %lu frames OK "
+                      "(STATUS.RX_DATA_READY seen on %lu)\r\n",
+                      (unsigned long)r.frames, (unsigned long)r.rx_ready_flags);
         }
     }
 

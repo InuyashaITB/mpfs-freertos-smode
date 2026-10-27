@@ -337,3 +337,19 @@ Renode (no Renode in the build container).
   - `renode/README.md` explains how to check that models loaded: errors
     from the launcher's `monitor include` are not shown in the Renode log.
 
+**Second Renode run: `no response, 16 of 16 frames timed out (TX done 0,
+RX ready 16)`.**
+- The boot no longer hangs and the scheduler runs.
+- TX done came on every frame, so the device on `spi1` is attached and
+  transmitting.
+- **Cause:** `MPFS_SPI` sets `STATUS.RXDATRCVD` (the driver's
+  `RX_DATA_READY`) only when the received byte count is a multiple of the
+  frame size *in bits* (every 8 bytes for 8-bit frames). Each frame here
+  flushes the FIFO first, so it never comes.
+- **Fix:** wait for `RXFIFOEMPTY` to clear before reading `RX_DATA`, which
+  is equally valid on hardware. The report says on how many frames
+  `RX_DATA_READY` was also set.
+- **For later phases:** the vendor `MSS_SPI_transfer_frame()` cannot be used
+  in Renode 1.13 as is; `MSS_SPI_transfer_block()` (which watches the FIFO
+  flags) is the one to check for the flash and protocol drivers.
+
