@@ -256,7 +256,7 @@ boundaries.
 | 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode. **Done** (see "Phase 1 status") |
 | 2 | §3 SPI NOR flash | Flash demo PASS in Renode. **Implemented; passes in Renode 1.13.1** (see "Phase 2 status"); waiting for the SoftConsole run |
 | 3 | §5 I2C EEPROM | EEPROM demo PASS. **Done**: `make sim` passes in Renode 1.13.1 and the SoftConsole run shows all EEPROM steps PASS (see "Phase 3 status") |
-| 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event. **Implemented; `make sim` passes in Renode 1.13.1** (see "Phase 4 status"); waiting for the SoftConsole run |
+| 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event. **Done**: `make sim` passes in Renode 1.13.1 and the SoftConsole run shows every protocol step PASS (see "Phase 4 status") |
 | 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames exchanged between the two simulated boards |
 | 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo between board 0 and board 1 |
 | 5c | *(optional)* `SocketBridge` model + user-mode host helper | Host helper answers ARP/ping from a board |
@@ -484,7 +484,9 @@ UART1:
 
 ## Phase 4 status
 
-**Implemented; `make sim` passes in Renode 1.13.1** (6 expected lines).
+**Done.** `make sim` passes in Renode 1.13.1 (6 expected lines), and the
+SoftConsole launch shows every protocol step PASS. There, the event line
+appears after `spi1.proto InjectEvent` in the Renode monitor.
 UART1:
 
 ```
