@@ -11,8 +11,9 @@
 > boot/                mpfs.h (own CSR/CLINT/SBI/PTE definitions), entry.S (M-mode
 >                      _start), m_shim.c + m_trap.S (delegation, PMP, SBI set_timer and
 >                      IPI, timer forwarding, mret to S-mode), s_start.S (Sv39 on with
->                      the application's table, stvec, s_mode_main), linker.ld (L2LIM,
->                      physical addresses)
+>                      the application's table, jump to the high-half alias, stvec,
+>                      s_mode_main), linker.ld (L2LIM: linked at the alias, loaded
+>                      at the physical address)
 > app/                 main.c (the Sv39 root table, s_mode_main, the counting task),
 >                      FreeRTOSConfig.h
 > renode/hello.resc    run it in Renode as a bootloader would start it
@@ -32,23 +33,36 @@
 >
 > **Boot contract (no HAL, loaded by a bootloader):**
 > - The bootloader (e.g. an HSS bare-metal payload, not through OpenSBI) loads
->   the ELF at its physical addresses (L2LIM, `0x0800_0000`) and starts
->   U54_1 in M-mode at `_start` = `0x0800_0000` with `a0` = hart id. Clocks,
->   L2 configured as LIM, and an unlocked PMP entry 0 are its job. Other harts
->   that reach `_start` are parked.
+>   the ELF at its physical addresses (`p_paddr`: L2LIM, `0x0800_0000`) and
+>   starts U54_1 in M-mode at the physical entry `_start_pa` = `0x0800_0000`
+>   with `a0` = hart id. Not at `e_entry`: that is the virtual `_start`.
+>   Clocks, L2 configured as LIM, and an unlocked PMP entry 0 are its job.
+>   Other harts that reach `_start` are parked.
+> - **L2LIM in the virtual high half, as on `main`:** the image is linked at
+>   VA `0xFFFFFFC0_0800_0000` (PA + `MPFS_ONCHIP_VA_OFFSET`) and loaded at PA
+>   `0x0800_0000`. M-mode runs the physical copy with the MMU off
+>   (`-mcmodel=medany` makes all code addressing PC-relative). S-mode turns
+>   Sv39 on and jumps to the alias; the kernel, the task and every pointer
+>   then use the high addresses. Absolute addresses stored in data are
+>   virtual, so only valid in S-mode.
 > - The image sets up M-mode itself (`boot/`) and drops to S-mode. M-mode then
 >   only serves SBI `set_timer` / `send_ipi` and forwards the machine timer
 >   interrupt as the S-mode tick. An unexpected trap is recorded in
 >   `g_m_fault` and the hart parks.
 > - **The application provides the Sv39 root page table**,
 >   `mpfs_sv39_root_table` (512 entries, 4 KiB aligned); the link fails
->   without it. The image is linked at its physical addresses, so the table
->   must map it and the CLINT `mtime` register 1:1. The hello-world's table is
->   one 1 GiB gigapage at `0x0000_0000`.
+>   without it. It must map L2LIM both 1:1 (the instructions right after the
+>   `satp` write still run at the physical address) and at the alias, plus
+>   the CLINT `mtime` register at its physical address. The hello-world's
+>   table: two 1 GiB gigapages onto PA `0x0000_0000`, entry 0 (1:1, which
+>   also covers the CLINT) and entry 256 (VA `0xFFFFFFC0_0000_0000`). A table
+>   without the alias parks the hart in `s_park` before FreeRTOS starts.
 >
 > **Checking it:** in Renode, `renode -e "include @renode/hello.resc"`, then
-> `start`; `sysbus GetSymbolAddress "g_count"` and `sysbus ReadDoubleWord
-> <address>` show the count: 1000 after one emulated second, 2000 after two.
+> `start`; `sysbus ReadDoubleWord <g_count's address - 0xFFFFFFC0_00000000>`
+> shows the count (symbols are virtual, Renode's bus is physical): 1000
+> after one emulated second, 2000 after two. `sysbus.u54_1 PC` shows the
+> hart in the alias (`0xFFFFFFC0_08…`).
 > On hardware, read `g_count` with a debugger. Image size (Debug, GCC 13):
 > 12.3 KB of code, 29 KB of RAM (16 KiB heap, 4 KiB ISR stack, 4 KiB each for
 > the M-mode and S-mode boot stacks).

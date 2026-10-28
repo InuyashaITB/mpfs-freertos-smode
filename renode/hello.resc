@@ -2,18 +2,23 @@
 #
 # Runs build/hello.elf in Renode the way the bootloader starts it: the ELF
 # loaded at its physical addresses, the E51 and U54_2..4 held halted, U54_1
-# started in M-mode at _start with a0 = hart id. Start Renode in the project
-# root:
+# started in M-mode at the physical entry 0x0800_0000 (_start_pa; LoadELF
+# itself sets the virtual e_entry) with a0 = hart id. Start Renode in the
+# project root:
 #
 #   renode -e "include @renode/hello.resc"
 #
-# then 'start', and read the counter (address from the symbol table):
+# then 'start'. Symbols are virtual (0xFFFFFFC0_08...) but sysbus reads
+# physical addresses: subtract 0xFFFFFFC0_00000000 from the symbol's address,
+# e.g. g_count at 0xffffffc008003160 is
 #
-#   sysbus GetSymbolAddress "g_count"
-#   sysbus ReadQuadWord <that address>
+#   sysbus ReadDoubleWord 0x08003160
 #
-# It goes up by one per tick (1000 per emulated second). A non-zero
-# g_m_fault (M-mode shim: unexpected trap) means the hart parked.
+# (the low 32 bits). It goes up by one per tick: 1000 per emulated second.
+# 'sysbus.u54_1 PC' shows the hart running from the alias (0xFFFFFFC0_08...).
+# A non-zero g_m_fault (M-mode shim: unexpected trap) means the hart parked;
+# a PC at s_park's physical address means S-mode faulted before FreeRTOS
+# started (e.g. a page table without the alias).
 
 $elf?=@build/hello.elf
 

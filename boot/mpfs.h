@@ -6,12 +6,20 @@
  *
  * Boot contract (see README.md, "bare-bones branch"):
  *   - A bootloader (e.g. an HSS bare-metal payload, no OpenSBI) loads the ELF
- *     at its physical addresses and starts U54_1 in M-mode at _start with
- *     a0 = hart id. Clocks, L2 as LIM, and PMP entry 0 (unlocked) are its job.
+ *     at its physical addresses (p_paddr, L2LIM from 0x0800_0000) and starts
+ *     U54_1 in M-mode at the physical entry _start_pa = 0x0800_0000 (not
+ *     e_entry, which is virtual) with a0 = hart id. Clocks, L2 as LIM, and
+ *     PMP entry 0 (unlocked) are its job.
+ *   - The image is linked at the virtual alias of L2LIM in the high half
+ *     (VA = PA + MPFS_ONCHIP_VA_OFFSET) and loaded at its physical address.
+ *     M-mode runs from the physical copy with the MMU off (-mcmodel=medany
+ *     addresses everything PC-relative); S-mode switches to the alias once
+ *     Sv39 is on.
  *   - The application provides the Sv39 root page table, mpfs_sv39_root_table:
- *     512 entries, 4 KiB aligned. The image is linked at its physical
- *     addresses, so the table must map the image and the CLINT mtime
- *     register 1:1 (VA = PA), readable/writable/executable by S-mode.
+ *     512 entries, 4 KiB aligned, supervisor read/write/execute. It must map
+ *     L2LIM 1:1 (VA = PA: the code right after the satp write still runs
+ *     there), L2LIM at its alias (VA = PA + MPFS_ONCHIP_VA_OFFSET), and the
+ *     CLINT mtime register at its physical address (configMTIME_BASE_ADDRESS).
  */
 
 #ifndef MPFS_H_
@@ -25,6 +33,11 @@
 
 /* The hart that runs S-mode and FreeRTOS. */
 #define MPFS_SMODE_HART         1
+
+/* Virtual alias of the on-chip gigapage (L2LIM): VA = PA + this offset, i.e.
+ * PA 0x0800_0000 is VA 0xFFFFFFC0_0800_0000 (Sv39 root entry 256). Repeated
+ * as a literal in linker.ld. */
+#define MPFS_ONCHIP_VA_OFFSET   _UL(0xFFFFFFC000000000)
 
 /* CLINT. */
 #define CLINT_MTIMECMP_BASE     _UL(0x02004000)     /* + 8 * hart */

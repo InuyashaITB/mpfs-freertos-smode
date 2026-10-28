@@ -23,6 +23,7 @@
 typedef struct
 {
     uintptr_t ra, t0, t1, t2, a0, a1, a2, a3, a4, a5, a6, a7, t3, t4, t5, t6;
+    uintptr_t gp, pad;                  /* interrupted gp (S-mode: virtual) */
 } m_frame_t;
 
 /* Unexpected trap (count != 0): read with a debugger. */

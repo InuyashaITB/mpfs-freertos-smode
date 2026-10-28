@@ -11,12 +11,19 @@
 #include "task.h"
 #include "mpfs.h"
 
-/* Sv39 root table, required by the boot code (mpfs.h): one 1 GiB gigapage
- * mapping 0x0000_0000-0x3FFF_FFFF 1:1 (L2LIM with this image, the CLINT),
- * supervisor read/write/execute, accessed and dirty preset. */
+/* Sv39 root table, required by the boot code (mpfs.h). Two 1 GiB gigapages,
+ * both onto PA 0x0000_0000-0x3FFF_FFFF (L2LIM with this image, the CLINT):
+ *   entry 0    VA 0x0000_0000-0x3FFF_FFFF, 1:1 (the switch to the alias, mtime)
+ *   entry 256  VA 0xFFFFFFC0_0000_0000-..., the high-half alias the kernel
+ *              runs from (VA = PA + MPFS_ONCHIP_VA_OFFSET)
+ * Supervisor read/write/execute, accessed and dirty preset. */
+#define ONCHIP_FLAGS    (PTE_V | PTE_R | PTE_W | PTE_X | PTE_G | PTE_A | PTE_D)
+#define SV39_VPN2(va)   (((va) >> 30) & 0x1FFU)
+
 const uint64_t mpfs_sv39_root_table[512] __attribute__((aligned(4096))) =
 {
-    [0] = PTE_GIGAPAGE(0x00000000UL, PTE_V | PTE_R | PTE_W | PTE_X | PTE_G | PTE_A | PTE_D),
+    [0] = PTE_GIGAPAGE(0x00000000UL, ONCHIP_FLAGS),
+    [SV39_VPN2(MPFS_ONCHIP_VA_OFFSET)] = PTE_GIGAPAGE(0x00000000UL, ONCHIP_FLAGS),
 };
 
 volatile uint64_t g_count;

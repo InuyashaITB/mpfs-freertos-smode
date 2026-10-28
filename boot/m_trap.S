@@ -4,7 +4,9 @@
  * M-mode trap vector after the drop to S-mode: only SBI ecalls and the
  * machine timer interrupt come here. Swaps to the M-mode stack held in
  * mscratch, saves the caller-saved registers and calls m_trap(frame), which
- * may change frame->a0/a1 (SBI return values) and mepc.
+ * may change frame->a0/a1 (SBI return values) and mepc. S-mode runs with gp
+ * at the virtual alias, so M-mode (MMU off) loads its own, physical gp for
+ * the handler and restores S-mode's afterwards.
  * Frame layout: m_frame_t in m_shim.c.
  */
 
@@ -15,7 +17,7 @@
     .globl m_trap_vector
 m_trap_vector:
     csrrw sp, mscratch, sp          /* sp = M-mode stack, mscratch = interrupted sp */
-    addi  sp, sp, -(16*REGBYTES)
+    addi  sp, sp, -(18*REGBYTES)    /* 18 slots: 16-byte aligned */
     sd ra,  0*REGBYTES(sp)
     sd t0,  1*REGBYTES(sp)
     sd t1,  2*REGBYTES(sp)
@@ -32,6 +34,12 @@ m_trap_vector:
     sd t4, 13*REGBYTES(sp)
     sd t5, 14*REGBYTES(sp)
     sd t6, 15*REGBYTES(sp)
+    sd gp, 16*REGBYTES(sp)
+
+    .option push
+    .option norelax
+    la gp, __global_pointer$        /* PC-relative: the physical alias here */
+    .option pop
 
     mv a0, sp
     call m_trap
@@ -52,6 +60,7 @@ m_trap_vector:
     ld t4, 13*REGBYTES(sp)
     ld t5, 14*REGBYTES(sp)
     ld t6, 15*REGBYTES(sp)
-    addi  sp, sp, (16*REGBYTES)
+    ld gp, 16*REGBYTES(sp)
+    addi  sp, sp, (18*REGBYTES)
     csrrw sp, mscratch, sp
     mret
