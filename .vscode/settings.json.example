@@ -29,6 +29,8 @@
             { "text": "tbreak s_mode_main" }
         ],
         "launchCompleteCommand": "exec-continue",
+        "stopAtEntry": true,
+        "unknownBreakpointHandling": "stop",
         "preLaunchTask": "Renode: start for debugging",
         "postDebugTask": "Renode: stop"
     }

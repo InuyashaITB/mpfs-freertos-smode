@@ -705,6 +705,14 @@ launcher, see "Debugging notes"):
   the PCs itself (`debug.resc`), so there is no `thread apply all set $pc`.
 * `monitor start` is needed: gdb's continue resumes the harts only once the
   emulation is running.
+* The stop at `s_mode_main` is gdb's own `tbreak`, which cppdbg does not
+  know about: `stopAtEntry: true` and `unknownBreakpointHandling: "stop"`
+  make it show as a normal stop (without them cppdbg resumes past it), and
+  `stopAtConnect: true` keeps the attach configuration stopped. If it still
+  runs past, add a function breakpoint on `s_mode_main` in the Breakpoints
+  view (cppdbg always stops on its own breakpoints) and set
+  `"logging": { "engineLogging": true }` to see the gdb traffic in the Debug
+  Console.
 * Each hart is a gdb thread (e51 = 1, u54_1 = 2, ...). The S-mode code
   stops on thread 2.
 * M-mode breakpoints: in the Debug Console,

@@ -8,6 +8,10 @@
     // before connecting (cppdbg's -file-exec-and-symbols on "program"), never
     // after; 'monitor start' starts the emulation, then gdb continues the
     // harts from the physical reset vector to s_mode_main.
+    //
+    // cppdbg treats the stop gdb reports on connecting as the launch's own:
+    // it resumes from it (unless stopAtConnect), and a stop it did not ask
+    // for is passed on only with the settings noted below.
     "version": "0.2.0",
     "configurations": [
         {
@@ -31,6 +35,11 @@
                 { "text": "tbreak s_mode_main" }
             ],
             "launchCompleteCommand": "exec-continue",
+            // The tbreak is gdb's, not VS Code's: its hit is reported either
+            // as the entry point (only stops with stopAtEntry) or as an
+            // unknown breakpoint (stops as an exception unless "stop").
+            "stopAtEntry": true,
+            "unknownBreakpointHandling": "stop",
             "preLaunchTask": "Renode: start for debugging",
             "postDebugTask": "Renode: stop"
         },
@@ -54,7 +63,9 @@
             "postRemoteConnectCommands": [
                 { "text": "monitor start" }
             ],
-            "launchCompleteCommand": "None"
+            "launchCompleteCommand": "None",
+            // Without it cppdbg resumes the harts after connecting.
+            "stopAtConnect": true
         }
     ]
 }
