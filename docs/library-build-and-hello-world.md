@@ -145,7 +145,7 @@ application only adds the optional M-mode pre-hook and the entry function.
 ```mermaid
 flowchart TD
     subgraph M ["M-mode, MMU off, physical addresses"]
-        RST["Reset: every hart at 0x0800_0000<br/>mss_entry.S, HAL start-up;<br/>E51 does the system init"]
+        RST["Standalone reset: all harts at 0x0800_0000<br/>mss_entry.S, HAL start-up;<br/>E51 does the system init"]
         U541["u54_1()<br/>library entry on U54_1,<br/>replaces the HAL default"]
         PRE["smode_m_prehook() &nbsp;optional<br/>clocks, resets, UART and<br/>other M-mode set-up"]
         ENT["PLIC S-context, m_shim_enter_smode()<br/>delegate S interrupts and faults,<br/>open PMP entry 0, mtvec = shim, satp = 0"]
@@ -180,9 +180,87 @@ After the hand-over, M-mode on U54_1 only runs for traps from S-mode:
 - anything unexpected, which is reported through `smode_diag_puts()` before
   the hart parks.
 
-With `LOADED_BY_BOOTLOADER=1` the E51 system init is skipped and a
-bootloader such as HSS starts U54_1, but the path from `u54_1()` onwards is
-the same.
+### 5.1 Loaded directly or by a bootloader
+
+The diagram above is the standalone case: what Renode and the SoftConsole
+and VS Code launchers run. The same application can instead be started by a
+bootloader such as HSS. One library setting, `LOADED_BY_BOOTLOADER`, selects
+the mode, and from `u54_1()` onwards both are identical.
+
+```mermaid
+flowchart TD
+    subgraph STD ["Standalone (LOADED_BY_BOOTLOADER=0)"]
+        SL["Debugger or Renode loads the ELF<br/>segments at their physical addresses<br/>(Renode LoadELF, the debug launchers)"]
+        SR["Every hart starts at 0x0800_0000<br/>reset vector, or set by the debug launcher"]
+        SE["mss_entry.S: full HAL start-up<br/>E51: clocks, L2 cache, PMP, PLIC reset;<br/>then releases U54_1 to U54_4, and the<br/>others run e51() and u54_2() to u54_4()"]
+    end
+    subgraph BL ["Loaded by a bootloader (LOADED_BY_BOOTLOADER=1)"]
+        BS["Bootloader (e.g. HSS) sets up the chip<br/>clocks, DDR training, L2 as LIM, PMP;<br/>the image skips all of it"]
+        BP["Parses the ELF<br/>copies each segment to its p_paddr<br/>(from 0x0800_0000), not to its p_vaddr"]
+        BJ["Starts U54_1 in M-mode at 0x0800_0000<br/>_start_pa, not e_entry (that is virtual)<br/>a0 = hart id, a1 = bootloader HLS"]
+        BE["mss_entry.S: minimal start-up<br/>trap vector, FPU, gp, stacks; no chip set-up"]
+    end
+    COMMON["u54_1() → smode_m_prehook() → S-mode → s_mode_main()<br/>the same in both modes: same application code,<br/>same Sv39 set-up and M-mode shim"]
+
+    SL --> SR --> SE --> COMMON
+    BS --> BP --> BJ --> BE --> COMMON
+
+    classDef app fill:#e2f0fd,stroke:#336,stroke-width:2px,color:#000
+    classDef lib fill:#fff,stroke:#888,color:#000
+    class COMMON app
+    class SL,SR,SE,BS,BP,BJ,BE lib
+```
+
+| | Standalone | Loaded by a bootloader |
+| --- | --- | --- |
+| Library build (make) | `make -C src install PREFIX=C:/mpfs-smode` (default) | `make -C src LOADED_BY_BOOTLOADER=1 install PREFIX=C:/mpfs-smode-hss` |
+| Library build (CMake) | `-DLOADED_BY_BOOTLOADER=OFF` (default) | `-DLOADED_BY_BOOTLOADER=ON` |
+| HAL defines the build sets | `IMAGE_LOADED_BY_BOOTLOADER=0`, `MPFS_HAL_FIRST_HART=0`, `MPFS_HAL_LAST_HART=4` | `IMAGE_LOADED_BY_BOOTLOADER=1`, `MPFS_HAL_FIRST_HART=1`, `MPFS_HAL_LAST_HART=1` (set it to 4 if the bootloader starts every U54) |
+| Chip set-up (clocks, L2 cache, PMP, PLIC reset) | this image, on the E51 | the bootloader; the image skips it |
+| Harts started | all five, from reset | U54_1 only, by the bootloader |
+| `e51()`, `u54_2()` to `u54_4()` | called (application or HAL weak defaults) | not called |
+| DDR, if the application uses it | HAL `DDR_SUPPORT` (off in this project); Renode needs no training | trained by the bootloader first |
+| PMP | set by the HAL; the shim opens entry 0 | owned by the bootloader; entry 0 must stay unlocked |
+| Hello-world code size | 39.7 KB | 32.1 KB |
+
+The application itself is the same in both modes. It compiles against
+whichever install tree it points at, and the enforced settings come from
+that tree. Keep one install tree per mode, as above.
+
+What an ELF-loading bootloader must do with this image:
+
+- **Load by physical address.** Copy each `PT_LOAD` segment to its
+  `p_paddr` (from `0x0800_0000` in L2LIM). The virtual addresses (`p_vaddr`,
+  from `0xffffffc0_0800_0000`) only exist once the image has turned its own
+  MMU on.
+- **Jump to `0x0800_0000`, not to the ELF entry point.** `e_entry` is the
+  virtual `_start` (`0xffffffc008000000`) and faults with the MMU off. The
+  physical entry is exported as the symbol `_start_pa`.
+- **Start U54_1 in M-mode**, with `a0` = 1 (the hart id) and `a1` = the
+  bootloader's Hart Local Storage for that hart. Not through OpenSBI: the
+  image installs its own M-mode shim. With HSS, that means a bare-metal
+  payload.
+- **Leave the hardware ready:** at least 255 KiB of L2 configured as LIM,
+  PMP entry 0 unlocked, and DDR trained if the application uses it.
+
+A loader that takes Intel HEX instead can use the demo's `.hex`
+(`objcopy -O ihex`), which already holds the physical addresses.
+
+The bootloader mode was checked in Renode by simulating the hand-over, not
+yet with HSS on hardware. The bootloader-mode hello-world was loaded by
+physical address, with the E51 and U54_2 to U54_4 held halted and only U54_1
+started; it printed the same output:
+
+```
+sysbus LoadELF @C:/work/hello/build/hello.elf
+sysbus.e51 IsHalted true
+sysbus.u54_2 IsHalted true
+sysbus.u54_3 IsHalted true
+sysbus.u54_4 IsHalted true
+sysbus.u54_1 PC 0x08000000
+sysbus.u54_1 SetRegisterUnsafe 10 1          # a0 = hart id
+sysbus.u54_1 SetRegisterUnsafe 11 0x01000000 # a1 = HLS (any scratch address here)
+```
 
 ## 6. A minimal application: hello-world on U54_1
 
@@ -439,8 +517,9 @@ S-mode code with symbols at their virtual addresses.
 - `configPORT_YIELD_VIA_SBI_IPI` is 1 because Renode 1.13 ignores S-mode
   writes to `sip`, and it must be 0 on hardware. Should hardware be the
   default, with Renode builds opting in?
-- Only standalone boot (`LOADED_BY_BOOTLOADER=0`) has been run. The
-  HSS-loaded mode is built but not tested.
+- Standalone boot (`LOADED_BY_BOOTLOADER=0`) has been run in Renode. The
+  bootloader mode has only been run with a simulated hand-over in Renode
+  (section 5.1), not yet with HSS on hardware.
 - Code runs from L2LIM: the demo's Debug build uses about 245 of 255 KiB.
   Larger applications need a Release build or code in DDR, which is not
   provided.
