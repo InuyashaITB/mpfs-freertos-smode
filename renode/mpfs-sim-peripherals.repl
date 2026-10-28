@@ -7,8 +7,10 @@
 //
 // MPFS_SPI takes a single slave per controller (no chip-select routing).
 
-// Phase 1: test slave on spi1 (replaced by the protocol device in Phase 4).
-loopback: SPI.SpiLoopback @ spi1
+// Phase 4: example-protocol device on spi1 (replaced the Phase 1 loopback).
+// DataReady (high while events are queued) -> F2M_1, PLIC 119.
+proto: SPI.ProtoSpiDevice @ spi1
+    DataReady -> plic@119
 
 // Phase 2: SPI NOR flash on spi0 (16 MiB, JEDEC ID EF 40 18).
 flash: SPI.NorFlash @ spi0

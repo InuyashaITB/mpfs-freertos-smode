@@ -10,116 +10,102 @@
 #include "mpfs_hal/mss_hal.h"
 #include "drivers/mss/mss_spi/mss_spi.h"
 #include "spi_flash.h"
+#include "proto_dev.h"
 #include "i2c_eeprom.h"
 #include "periph_selftest.h"
 
-#define SPI_LOOPBACK_FRAMES     (16U)
+/*------------------------------------------------------------------------------
+ * Phase 4: example-protocol SPI device
+ */
+#define PROTO_CLK_DIV       (8U)
+#define PROTO_ECHO_LEN      (24U)
+#define PROTO_TEST_REG      (5U)
+#define PROTO_TEST_VALUE    (0x3CU)
+#define PROTO_ABSENT_REG    (0x20U)
+#define PROTO_BAD_CMD       (0x7EU)
 
-/* Polls before a wait is given up. A frame at the configured clock divider
- * takes a few microseconds on hardware; in Renode the status is immediate. */
-#define SPI_POLL_LIMIT          (100000U)
-
-/* MSS SPI register bits (the same values mss_spi.c uses privately). */
-#define SPI_STATUS_TX_DONE          (0x00000001U)
-#define SPI_STATUS_RX_DATA_READY    (0x00000002U)
-#define SPI_STATUS_RX_FIFO_EMPTY    (0x00000040U)
-#define SPI_CMD_RX_FIFO_RESET       (0x00000004U)
-#define SPI_CMD_TX_FIFO_RESET       (0x00000008U)
-#define SPI_CTRL_TXRXDFCOUNT_MASK   (0x00FFFF00U)
-#define SPI_CTRL_TXRXDFCOUNT_SHIFT  (8U)
-
-typedef enum
+/* Prints one step; returns 1 on failure. */
+static uint32_t proto_step(selftest_print_t print, const char *step, proto_result_t r,
+                           uint32_t ok, const proto_response_t *rsp)
 {
-    SPI_XFER_OK,
-    SPI_XFER_TX_TIMEOUT,
-    SPI_XFER_RX_TIMEOUT,
-} spi_xfer_status_t;
-
-/* One full-duplex frame, as MSS_SPI_transfer_frame() does it, but with both
- * waits bounded, and waiting for "RX FIFO not empty" rather than
- * STATUS.RX_DATA_READY. Renode's MPFS_SPI sets RX_DATA_READY (its RXDATRCVD)
- * only when the received byte count is a multiple of the frame size in bits,
- * i.e. every 8 bytes for 8-bit frames, and each frame here starts with a FIFO
- * flush, so it never comes. RX_FIFO_EMPTY follows the FIFO directly, and
- * waiting for it to clear is as valid on hardware. *rx_ready_seen records
- * whether RX_DATA_READY was set as well. */
-static spi_xfer_status_t spi_transfer_frame_bounded(SPI_TypeDef *spi, uint32_t tx, uint32_t *rx,
-                                                    uint32_t *rx_ready_seen)
-{
-    uint32_t n;
-
-    spi->FRAMESUP = 0U;
-    spi->CONTROL = (spi->CONTROL & ~SPI_CTRL_TXRXDFCOUNT_MASK)
-                   | (1U << SPI_CTRL_TXRXDFCOUNT_SHIFT);
-    spi->COMMAND |= (SPI_CMD_TX_FIFO_RESET | SPI_CMD_RX_FIFO_RESET);
-
-    spi->TX_DATA = tx;
-
-    for (n = 0U; (n < SPI_POLL_LIMIT) && (0U == (spi->STATUS & SPI_STATUS_TX_DONE)); n++)
+    if ((PROTO_OK != r) && (PROTO_NAK != r))
     {
+        print("[S] SPI1 proto: %-38s FAIL (%s)\r\n", step, proto_result_str(r));
+        return 1U;
     }
-    if (n == SPI_POLL_LIMIT)
-    {
-        return SPI_XFER_TX_TIMEOUT;
-    }
-
-    for (n = 0U; (n < SPI_POLL_LIMIT) && (0U != (spi->STATUS & SPI_STATUS_RX_FIFO_EMPTY)); n++)
-    {
-    }
-    if (n == SPI_POLL_LIMIT)
-    {
-        return SPI_XFER_RX_TIMEOUT;
-    }
-
-    *rx_ready_seen = (0U != (spi->STATUS & SPI_STATUS_RX_DATA_READY)) ? 1U : 0U;
-    *rx = spi->RX_DATA;
-    return SPI_XFER_OK;
+    print("[S] SPI1 proto: %-38s %s (status 0x%02x, %lu marker polls)\r\n",
+          step, (0U != ok) ? "PASS" : "FAIL", (unsigned)rsp->status,
+          (unsigned long)rsp->marker_polls);
+    return (0U != ok) ? 0U : 1U;
 }
 
-void spi_loopback_selftest(spi_loopback_result_t *result)
+/* A NAK with the given status is the expected outcome. */
+static uint32_t is_nak(proto_result_t r, const proto_response_t *rsp, uint8_t status)
 {
-    *result = (spi_loopback_result_t){ 0 };
+    return ((PROTO_NAK == r) && (status == rsp->status)) ? 1U : 0U;
+}
 
-    /* In S-mode: MSS_SPI_init() calls PLIC_DisableIRQ(), which must use the
+uint32_t spi_proto_selftest(selftest_print_t print)
+{
+    static proto_response_t rsp;
+    uint8_t echo[PROTO_ECHO_LEN];
+    uint8_t value = 0U;
+    uint32_t failed = 0U;
+    proto_result_t r;
+
+    /* MSS_SPI_init() calls PLIC_DisableIRQ(), which in S-mode must use the
      * S context instead of reading mhartid (mss_plic.h). */
-    MSS_SPI_init(&g_mss_spi1_lo);
-    MSS_SPI_configure_master_mode(&g_mss_spi1_lo, MSS_SPI_SLAVE_0, MSS_SPI_MODE0,
-                                  256U, 8U, NULL);
+    proto_init(&g_mss_spi1_lo, PROTO_CLK_DIV);
 
-    MSS_SPI_set_slave_select(&g_mss_spi1_lo, MSS_SPI_SLAVE_0);
-    for (uint32_t i = 0U; i < SPI_LOOPBACK_FRAMES; i++)
+    r = proto_ping(&rsp);
+    if ((PROTO_ERR_BUS == r) || (PROTO_ERR_NO_MARKER == r))
     {
-        uint32_t tx = (i * 0x11U) & 0xFFU;
-        uint32_t rx = 0U;
-        uint32_t rx_ready_seen = 0U;
-
-        result->frames++;
-        switch (spi_transfer_frame_bounded(g_mss_spi1_lo.hw_reg, tx, &rx, &rx_ready_seen))
-        {
-            case SPI_XFER_TX_TIMEOUT:
-                result->tx_timeouts++;
-                break;
-
-            case SPI_XFER_RX_TIMEOUT:
-                result->rx_timeouts++;
-                break;
-
-            default:
-                result->rx_ready_flags += rx_ready_seen;
-                rx &= 0xFFU;
-                if (rx != ((~tx) & 0xFFU))
-                {
-                    if (0U == result->errors)
-                    {
-                        result->first_bad_tx = tx;
-                        result->first_bad_rx = rx;
-                    }
-                    result->errors++;
-                }
-                break;
-        }
+        print("[S] SPI1 proto: PING FAIL (%s). Is the Renode model attached? "
+              "See renode/README.md\r\n", proto_result_str(r));
+        return 1U;
     }
-    MSS_SPI_clear_slave_select(&g_mss_spi1_lo, MSS_SPI_SLAVE_0);
+    failed += proto_step(print, "PING -> ID c5, version 01", r,
+                         (PROTO_OK == r) && (2U == rsp.len) && (0xC5U == rsp.payload[0]) &&
+                         (0x01U == rsp.payload[1]), &rsp);
+
+    for (uint32_t i = 0U; i < PROTO_ECHO_LEN; i++)
+    {
+        echo[i] = (uint8_t)((i * 11U) ^ 0x5AU);
+    }
+    r = proto_transact(PROTO_CMD_ECHO, echo, PROTO_ECHO_LEN, &rsp, 0U);
+    failed += proto_step(print, "ECHO 24 bytes", r,
+                         (PROTO_OK == r) && (PROTO_ECHO_LEN == rsp.len) &&
+                         (0 == memcmp(rsp.payload, echo, PROTO_ECHO_LEN)), &rsp);
+
+    r = proto_write_reg(PROTO_TEST_REG, PROTO_TEST_VALUE, &rsp);
+    if (PROTO_OK == r)
+    {
+        r = proto_read_reg(PROTO_TEST_REG, &value, &rsp);
+    }
+    failed += proto_step(print, "WRITE_REG 5 = 3c, READ_REG 5 -> 3c", r,
+                         (PROTO_OK == r) && (PROTO_TEST_VALUE == value), &rsp);
+
+    r = proto_read_reg(PROTO_ABSENT_REG, &value, &rsp);
+    failed += proto_step(print, "READ_REG 0x20 -> NAK BAD_ADDR", r,
+                         is_nak(r, &rsp, PROTO_STATUS_BAD_ADDR), &rsp);
+
+    r = proto_write_reg(0U, 0x00U, &rsp);
+    failed += proto_step(print, "WRITE_REG 0 (ID) -> NAK READ_ONLY", r,
+                         is_nak(r, &rsp, PROTO_STATUS_READ_ONLY), &rsp);
+
+    r = proto_transact(PROTO_CMD_ECHO, echo, 4U, &rsp, 1U);
+    failed += proto_step(print, "corrupted CRC -> NAK BAD_CRC", r,
+                         is_nak(r, &rsp, PROTO_STATUS_BAD_CRC), &rsp);
+
+    r = proto_transact(PROTO_BAD_CMD, NULL, 0U, &rsp, 0U);
+    failed += proto_step(print, "command 0x7e -> NAK UNKNOWN_CMD", r,
+                         is_nak(r, &rsp, PROTO_STATUS_UNKNOWN_CMD), &rsp);
+
+    r = proto_get_events(&rsp);
+    failed += proto_step(print, "GET_EVENTS -> none queued", r,
+                         (PROTO_OK == r) && (0U == rsp.len), &rsp);
+
+    return failed;
 }
 
 /*------------------------------------------------------------------------------

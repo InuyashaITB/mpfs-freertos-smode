@@ -126,8 +126,10 @@ frames.
 **Example protocol** (half-duplex frames, master-clocked):
 - **Request:** `0xA5 | cmd | len | payload[len] | crc8`.
 - **Response:** the device holds an internal response buffer. The master
-  clocks `0x00`s until it sees `0x5A`, then reads
-  `status | len | payload | crc8`.
+  clocks filler until it sees `0x5A`, then reads
+  `status | len | payload | crc8`. *(As built: the filler is `0xFF` and
+  the response is read in transfers after the request's; see "Phase 4
+  status".)*
 - **Commands:** `PING`, `ECHO`, `READ_REG(addr)`, `WRITE_REG(addr,val)`,
   `GET_EVENTS`.
 - **Errors:** bad CRC or an unknown command answers `NAK` with a reason.
@@ -254,7 +256,7 @@ boundaries.
 | 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode. **Done** (see "Phase 1 status") |
 | 2 | §3 SPI NOR flash | Flash demo PASS in Renode. **Implemented; passes in Renode 1.13.1** (see "Phase 2 status"); waiting for the SoftConsole run |
 | 3 | §5 I2C EEPROM | EEPROM demo PASS. **Done**: `make sim` passes in Renode 1.13.1 and the SoftConsole run shows all EEPROM steps PASS (see "Phase 3 status") |
-| 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event |
+| 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event. **Implemented; `make sim` passes in Renode 1.13.1** (see "Phase 4 status"); waiting for the SoftConsole run |
 | 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames exchanged between the two simulated boards |
 | 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo between board 0 and board 1 |
 | 5c | *(optional)* `SocketBridge` model + user-mode host helper | Host helper answers ARP/ping from a board |
@@ -479,3 +481,55 @@ UART1:
   "no device at 0x50", the scheduler keeps running, and `make sim` fails.
 - **`expected-uart.txt`:** the tick line is now `[S] tick=2`, since the
   EEPROM test shifts the status lines by a tick.
+
+## Phase 4 status
+
+**Implemented; `make sim` passes in Renode 1.13.1** (6 expected lines).
+UART1:
+
+```
+[S] SPI1 proto: PING -> ID c5, version 01              PASS (status 0x00, 2 marker polls)
+[S] SPI1 proto: ECHO 24 bytes                          PASS (status 0x00, 2 marker polls)
+[S] SPI1 proto: WRITE_REG 5 = 3c, READ_REG 5 -> 3c     PASS (status 0x00, 2 marker polls)
+[S] SPI1 proto: READ_REG 0x20 -> NAK BAD_ADDR          PASS (status 0x84, 2 marker polls)
+[S] SPI1 proto: WRITE_REG 0 (ID) -> NAK READ_ONLY      PASS (status 0x85, 2 marker polls)
+[S] SPI1 proto: corrupted CRC -> NAK BAD_CRC           PASS (status 0x81, 2 marker polls)
+[S] SPI1 proto: command 0x7e -> NAK UNKNOWN_CMD        PASS (status 0x82, 2 marker polls)
+[S] SPI1 proto: GET_EVENTS -> none queued              PASS (status 0x00, 2 marker polls)
+[S] SPI1 proto (S-mode, ProtoSpiDevice): PASS
+...
+[S] SPI1 proto: data-ready interrupt, events: 42 (tick 977)
+```
+
+- **Model:** `renode/models/ProtoSpiDevice.cs` on `spi1`, replacing the
+  loopback (`SpiLoopback.cs` and the loopback test removed). `MPFS_SPI`
+  takes one device per controller.
+  - The protocol is in `renode/README.md`. It was unit-tested with mcs: all
+    commands, every NAK, a bad length, an aborted request, a response read
+    across transfers, and the event queue with data-ready.
+  - A response is read only in transfers after the request's own. Otherwise,
+    after an early answer (bad length), the rest of the request transfer
+    would consume the response.
+- **Firmware:**
+  - `spi_xfer.c` (the bounded transfer, moved out of `spi_flash.c` and
+    shared);
+  - `proto_dev.c` (framing, CRC-8, marker polling, response checks);
+  - `spi_proto_selftest()` before the scheduler.
+- **Device-initiated event:** `DataReady` → PLIC 119 (F2M_1).
+  - `fabric_f2h_1_plic_IRQHandler` posts to the console queue and returns
+    `EXT_IRQ_DISABLE`, because the line stays high until GET_EVENTS.
+  - The console task fetches the events, prints them and re-enables the
+    source.
+  - The PLIC latches the still-high line as pending again on complete, so
+    re-enabling delivers one more interrupt with an empty queue. Real
+    hardware does the same. The app ignores an empty fetch.
+- **Headless run:** `make sim` injects `0x42` after 1 s
+  (`spi1.proto InjectEvent 0x42` in `run-demo.resc`). `SIM_TIME` is now the
+  time after that first second.
+- **Negative checks:**
+  - Without the injection, only the event line is missing and `make sim`
+    fails.
+  - Without the device in the repl, Renode 1.13's `MPFS_SPI` stops with a
+    fatal error on the first transfer, because it has no device to talk to.
+    The firmware's "no response" path can't be reached in Renode, but
+    `make sim` fails as it should. Documented in `renode/README.md`.

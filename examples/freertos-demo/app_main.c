@@ -32,7 +32,7 @@
  *   heartbeat (prio 1): every 5 s prints uptime and heap/stack headroom.
  *
  * Before the scheduler starts, s_mode_main() runs the peripheral self-tests
- * (periph_selftest.c; polled, bounded): the SPI1 loopback and the SPI0 NOR
+ * (periph_selftest.c; polled, bounded): the SPI1 protocol device and the SPI0 NOR
  * flash (spi_flash.c), against the Renode models in renode/models. The I2C
  * EEPROM test needs interrupts, so the console task runs it when it starts
  * (no extra task: the heap has little room left).
@@ -66,12 +66,14 @@
 #include "smode/sbi.h"
 #include "ddr_buffers.h"
 #include "periph_selftest.h"
+#include "proto_dev.h"
 
 typedef enum
 {
     EVT_GPIO2_30 = 1,
     EVT_GPIO2_31 = 2,
     EVT_F2M_0    = 3,
+    EVT_PROTO    = 4,   /* SPI1 protocol device: data-ready (F2M_1) */
 } app_event_t;
 
 #define HEARTBEAT_PERIOD_MS     (5000U)
@@ -191,6 +193,16 @@ uint8_t gpio1_bit17_or_gpio2_bit31_plic_31_IRQHandler(void)
     return EXT_IRQ_KEEP_ENABLED;
 }
 
+/* Data-ready from the SPI1 protocol device (renode: DataReady -> PLIC 119).
+ * The line is level and stays high until GET_EVENTS empties the device's
+ * queue, so the source is disabled here and the console task re-enables it
+ * after fetching the events. SPI transfers are not done in the ISR. */
+uint8_t fabric_f2h_1_plic_IRQHandler(void)
+{
+    prvPostEvent(EVT_PROTO);
+    return EXT_IRQ_DISABLE;
+}
+
 uint8_t fabric_f2h_0_plic_IRQHandler(void)
 {
     MSS_GPIO_set_output(GPIO2_LO, MSS_GPIO_28, 0U);
@@ -224,7 +236,38 @@ static void vConsoleTask(void *pvParameters)
     {
         uint8_t ucEvt;
 
-        if (pdPASS == xQueueReceive(xEventQueue, &ucEvt, pdMS_TO_TICKS(20)))
+        const BaseType_t xQueued = xQueueReceive(xEventQueue, &ucEvt, pdMS_TO_TICKS(20));
+
+        if ((pdPASS == xQueued) && (EVT_PROTO == ucEvt))
+        {
+            static proto_response_t rsp;
+            proto_result_t r = proto_get_events(&rsp);
+            BaseType_t xLocked = prvConsoleLock();
+
+            /* The PLIC latches the source as pending again on complete (the
+             * line was still high), so re-enabling it below delivers one more
+             * interrupt after the queue is empty: nothing to report then. */
+            if ((PROTO_OK == r) && (0U == rsp.len))
+            {
+            }
+            else if (PROTO_OK == r)
+            {
+                prvPrintfLocked("[S] SPI1 proto: data-ready interrupt, events:");
+                for (uint32_t i = 0U; i < rsp.len; i++)
+                {
+                    prvPrintfLocked(" %02x", (unsigned)rsp.payload[i]);
+                }
+                prvPrintfLocked(" (tick %lu)\r\n", (unsigned long)xTaskGetTickCount());
+            }
+            else
+            {
+                prvPrintfLocked("[S] SPI1 proto: data-ready interrupt, GET_EVENTS FAIL (%s)\r\n",
+                                proto_result_str(r));
+            }
+            prvConsoleUnlock(xLocked);
+            SPLIC_enable(FABRIC_F2H_1_PLIC);
+        }
+        else if (pdPASS == xQueued)
         {
             static const char * const names[] = { "?", "GPIO2_30", "GPIO2_31", "F2M_0" };
             prvPrintf("[S] PLIC S-context interrupt: %s (tick %lu)\r\n",
@@ -672,6 +715,7 @@ static const PLIC_IRQn_Type g_smode_irqs[] =
     GPIO1_BIT16_or_GPIO2_BIT30_PLIC_30,
     GPIO1_BIT17_or_GPIO2_BIT31_PLIC_31,
     FABRIC_F2H_0_PLIC,
+    FABRIC_F2H_1_PLIC,
 };
 
 void s_mode_main(void)
@@ -706,31 +750,12 @@ void s_mode_main(void)
     }
 
     {
-        spi_loopback_result_t r;
+        uint32_t failed;
 
-        prvPrintf("[S] SPI1 loopback: starting\r\n");
-        spi_loopback_selftest(&r);
-        if ((0U != r.tx_timeouts) || (0U != r.rx_timeouts))
-        {
-            prvPrintf("[S] SPI1 loopback: no response, %lu of %lu frames timed out "
-                      "(TX done %lu, RX data %lu). Is the Renode model attached? "
-                      "See renode/README.md\r\n",
-                      (unsigned long)(r.tx_timeouts + r.rx_timeouts), (unsigned long)r.frames,
-                      (unsigned long)r.tx_timeouts, (unsigned long)r.rx_timeouts);
-        }
-        if (0U != r.errors)
-        {
-            prvPrintf("[S] SPI1 loopback: %lu of %lu frames wrong, first sent 0x%02lx got 0x%02lx "
-                      "(expected the complement)\r\n",
-                      (unsigned long)r.errors, (unsigned long)r.frames,
-                      (unsigned long)r.first_bad_tx, (unsigned long)r.first_bad_rx);
-        }
-        if ((0U == r.errors) && (0U == r.tx_timeouts) && (0U == r.rx_timeouts))
-        {
-            prvPrintf("[S] SPI1 loopback (S-mode, MSS_SPI driver): %lu frames OK "
-                      "(STATUS.RX_DATA_READY seen on %lu)\r\n",
-                      (unsigned long)r.frames, (unsigned long)r.rx_ready_flags);
-        }
+        prvPrintf("[S] SPI1 proto: starting\r\n");
+        failed = spi_proto_selftest(prvPrintf);
+        prvPrintf("[S] SPI1 proto (S-mode, ProtoSpiDevice): %s\r\n",
+                  (0U == failed) ? "PASS" : "FAIL");
     }
 
     {

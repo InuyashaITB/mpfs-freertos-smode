@@ -418,7 +418,9 @@ with `SMODE_HART` (checked at build time).
 | `examples/freertos-demo/m_prehook.c` | `smode_m_prehook()`: MMUART1, GPIO2, GPIO→PLIC routing; `smode_diag_puts()` on MMUART1 |
 | `examples/freertos-demo/other_harts.c` | `e51()` (UART0 banner) and `u54_2..4()`: park in WFI |
 | `examples/freertos-demo/ddr_buffers.*` | *(mmu-sv39)* 3 x 1 GiB buffers: linker symbols (`ddr_buffers.ld`) + `g_ddr_buffer[]` pointer table |
-| `examples/freertos-demo/periph_selftest.*` | Peripheral self-tests: SPI1 loopback and SPI0 NOR flash before the scheduler, I2C0 EEPROM in the console task |
+| `examples/freertos-demo/periph_selftest.*` | Peripheral self-tests: SPI1 protocol device and SPI0 NOR flash before the scheduler, I2C0 EEPROM in the console task |
+| `examples/freertos-demo/spi_xfer.*` | Bounded SPI master transfer (one chip-select window), shared by the SPI drivers |
+| `examples/freertos-demo/proto_dev.*` | Driver for the example-protocol SPI device (framing, CRC-8, response polling) |
 | `examples/freertos-demo/spi_flash.*` | Minimal SPI NOR flash driver on `MSS_SPI` (bounded, one transfer per command) |
 | `examples/freertos-demo/i2c_eeprom.*` | Minimal I2C EEPROM driver on `MSS_I2C` (interrupt-driven, page split, ACK polling) |
 | `renode/mpfs-ddr-38bit-cached-3gib.repl` | *(mmu-sv39)* Adds 2 GiB of DDR to Renode's platform |

@@ -18,7 +18,7 @@ the Renode monitor (paths relative to the project):
 
 ```
 machine LoadPlatformDescription @renode/mpfs-ddr-38bit-cached-3gib.repl
-include @renode/models/SpiLoopback.cs
+include @renode/models/ProtoSpiDevice.cs
 include @renode/models/NorFlash.cs
 include @renode/models/MpfsI2c.cs
 include @renode/models/I2cEeprom.cs
@@ -49,7 +49,8 @@ problems.
     report from the libraries);
   * a line of `expected-uart.txt` is missing.
 * **Options:**
-  * `SIM_TIME=10`: emulated seconds; the default 3 takes about 20 s real time.
+  * `SIM_TIME=10`: emulated seconds after the first one, in which the script
+    injects a `spi1.proto` event. The default 3 takes about 30 s real time.
   * `RENODE_FLAGS=...`: default `--disable-xwt --console`.
 * **New self-test:** add its PASS line to `expected-uart.txt`. A new model
   also goes into `run-demo.resc` (`include`) and the launcher.
@@ -81,8 +82,8 @@ window. If a self-test reports "no response", check in the Renode monitor
 (`machine-0` prompt):
 
 ```
-peripherals                                   # spi0: 'flash', spi1: 'loopback', i2c0 (MpfsI2c): 'eeprom'
-include @<project>/renode/models/SpiLoopback.cs
+peripherals                                   # spi0: 'flash', spi1: 'proto', i2c0 (MpfsI2c): 'eeprom'
+include @<project>/renode/models/ProtoSpiDevice.cs
 include @<project>/renode/models/NorFlash.cs
 include @<project>/renode/models/MpfsI2c.cs
 include @<project>/renode/models/I2cEeprom.cs
@@ -91,12 +92,60 @@ include @<project>/renode/models/I2cEeprom.cs
 The `include` prints compile errors, if any. Including a model twice is
 harmless.
 
+An SPI controller with no device attached is worse than "no response":
+Renode 1.13's `MPFS_SPI` stops the emulation with a fatal error on the first
+transfer. If the UART output ends at a `starting` line, look for `Fatal error`
+in the Renode log.
+
 | Device | Model | Attached to | Phase |
 |---|---|---|---|
-| `loopback` | `SPI.SpiLoopback`: answers each byte with its complement | `spi1` | 1 (test) |
+| `proto` | `SPI.ProtoSpiDevice`: example request/response protocol, data-ready line (replaced the Phase 1 loopback) | `spi1`, `DataReady` → PLIC 119 (F2M_1) | 4 |
 | `flash` | `SPI.NorFlash`: 16 MiB serial NOR, JEDEC ID `EF 40 18` | `spi0` | 2 |
 | `i2c0` | `I2C.MpfsI2c`: MSS I2C controller, **replaces** the built-in `MPFS_I2C` | `sysbus` `0x2010A000`, PLIC 58 | 3 |
 | `eeprom` | `I2C.I2cEeprom`: AT24C256-like, 32 KiB, 64-byte pages | `i2c0` address `0x50` | 3 |
+
+## Protocol device (`spi1.proto`, `models/ProtoSpiDevice.cs`)
+
+An example of a custom SPI device: framed requests, a response the master
+polls for, a register file, NAKs, and a data-ready line for events the
+device starts. CRC-8 is polynomial 0x07, init 0x00.
+
+* **Request**, one transfer: `A5 | cmd | len | payload[len] | crc8(cmd, len,
+  payload)`, with len ≤ 32.
+* **Response**, read in later transfers:
+  * The master clocks filler (`FF`). The device answers `00` until the
+    response is ready (`ResponseDelay` bytes, default 2), then `5A`, then
+    `status | len | payload | crc8(status, len, payload)`.
+  * The response position survives chip select. A transfer starting with
+    `A5` begins a new request and drops an unread response.
+  * A transfer that ends in the middle of a request drops it
+    (`AbortedRequests`).
+
+| cmd | Name | Payload → response |
+|---|---|---|
+| `01` | PING | – → `C5 01` (ID, version) |
+| `02` | ECHO | bytes → the same bytes |
+| `03` | READ_REG | addr → value |
+| `04` | WRITE_REG | addr, value → – |
+| `05` | GET_EVENTS | – → up to 16 queued event bytes (removed) |
+
+* **Registers:** 16 × 8 bit; 0 (ID) and 1 (version) are read-only.
+* **Status:** `00` OK; NAK `81` BAD_CRC, `82` UNKNOWN_CMD, `83` BAD_LEN,
+  `84` BAD_ADDR, `85` READ_ONLY.
+* **Events:** `DataReady` is high while events are queued. It is wired to
+  PLIC 119 (F2M_1).
+  * The app's handler disables the source and wakes the console task, which
+    fetches the events with GET_EVENTS, prints
+    `[S] SPI1 proto: data-ready interrupt, events: ...` and re-enables the
+    source.
+  * In SoftConsole, type `spi1.proto InjectEvent 0x42` in the Renode
+    monitor at any time. `make sim` does this after 1 s.
+* **Monitor:** `spi1.proto InjectEvent <byte>`, `SetRegister <a> <v>`,
+  `GetRegister <a>`, `ResponseDelay 5` (set), `Requests`, `Naks`,
+  `AbortedRequests`, `EventsQueued`, `EventsDropped`.
+
+Firmware: `examples/freertos-demo/proto_dev.c`, on the shared bounded
+transfer in `spi_xfer.c`, which `spi_flash.c` uses too.
 
 ## I2C controller (`i2c0`, `models/MpfsI2c.cs`)
 

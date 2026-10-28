@@ -2,13 +2,15 @@
 # One fixed string per line, matched anywhere in a line; '#' starts a comment
 # line. Each phase adds its self-test's PASS line here.
 
-# Phase 1: SPI1 loopback
-SPI1 loopback (S-mode, MSS_SPI driver): 16 frames OK
+# Phase 4: SPI1 protocol device (replaced the Phase 1 loopback); the event
+# is injected by run-demo.resc after 1 s
+SPI1 proto (S-mode, ProtoSpiDevice): PASS
+SPI1 proto: data-ready interrupt, events: 42
 # Phase 2: SPI0 NOR flash
 SPI0 flash (S-mode, NorFlash model): PASS
 # Phase 3: I2C0 EEPROM (runs in the console task, after the scheduler starts)
 I2C0 EEPROM (S-mode, MSS_I2C driver, interrupts): PASS
 # The scheduler runs and the second status line appears (tick 2000 or a
-# little later; the default runtime is 3 s)
+# little later; the default run is 1 + 3 s)
 scheduler running
 [S] tick=2

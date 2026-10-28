@@ -52,7 +52,8 @@ clean:
 #   RENODE        Renode executable (required), e.g.
 #                 C:/Microchip/SoftConsole-v2022.2-RISC-V-747/renode/Renode.exe
 #   RENODE_FLAGS  default: --disable-xwt --console (no windows)
-#   SIM_TIME      emulated seconds (default 3)
+#   SIM_TIME      emulated seconds after the first one, in which the script
+#                 injects a device event (default 3)
 # Outputs in build/sim: uart1.txt (MMUART1), renode.log (Renode's console).
 # Renode runs in this directory (the script's paths are relative to it) and
 # reads end-of-file on stdin, so it exits even if a script command fails.

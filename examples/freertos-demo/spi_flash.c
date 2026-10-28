@@ -9,6 +9,7 @@
 
 #include "mpfs_hal/mss_hal.h"
 #include "drivers/mss/mss_spi/mss_spi.h"
+#include "spi_xfer.h"
 #include "spi_flash.h"
 
 #define CMD_WRITE_ENABLE    (0x06U)
@@ -26,93 +27,25 @@
 #define HEADER_SIZE         (4U)
 #define XFER_MAX_DATA       (SPI_FLASH_PAGE_SIZE)
 
-/* Polls of an empty RX FIFO before a transfer is abandoned (no device). */
-#define XFER_POLL_LIMIT     (100000U)
-
 /* Status reads before spi_flash_wait_ready() gives up. A 4 KiB sector erase
  * takes up to ~400 ms on real parts; one status read is 16 SPI clocks. */
 #define READY_POLL_LIMIT    (1000000U)
-
-/* MSS SPI register bits (the same values mss_spi.c uses privately). */
-#define SPI_CTRL_ENABLE             (0x00000001U)
-#define SPI_CTRL_TXRXDFCOUNT_MASK   (0x00FFFF00U)
-#define SPI_CTRL_TXRXDFCOUNT_SHIFT  (8U)
-#define SPI_FRAMESUP_MASK           (0xFFFF0000U)
-#define SPI_STATUS_RX_FIFO_EMPTY    (0x00000040U)
-#define SPI_STATUS_TX_FIFO_FULL     (0x00000100U)
-#define SPI_CMD_RX_FIFO_RESET       (0x00000004U)
-#define SPI_CMD_TX_FIFO_RESET       (0x00000008U)
-#define SPI_RX_FIFO_SIZE            (4U)
 
 static mss_spi_instance_t *s_spi = NULL;
 static uint8_t s_cmd[HEADER_SIZE + XFER_MAX_DATA];
 static uint32_t s_last_busy_polls = 0U;
 
-/* One command, chip select held from the first byte to the last: sends
- * cmd_len bytes of cmd, then clocks in rd_len bytes (sending 0xFF).
- *
- * The same algorithm as MSS_SPI_transfer_block() (frame count = whole
- * command, at most a few bytes in flight), but bounded. The frame count
- * matters in Renode: MPFS_SPI ends the slave's command when it is reached, so
- * a command must never be split over two transfers. */
-static spi_flash_status_t spi_xfer(const uint8_t *cmd, uint32_t cmd_len, uint8_t *rd, uint32_t rd_len)
+/* One command = one transfer (see spi_xfer.h). */
+static spi_flash_status_t xfer(const uint8_t *cmd, uint32_t cmd_len, uint8_t *rd, uint32_t rd_len)
 {
-    SPI_TypeDef *spi = s_spi->hw_reg;
-    const uint32_t total = cmd_len + rd_len;
-    uint32_t tx_idx = 0U;
-    uint32_t rx_idx = 0U;
-    uint32_t in_flight = 0U;
-    uint32_t idle = 0U;
-    spi_flash_status_t status = SPI_FLASH_OK;
-
-    MSS_SPI_set_slave_select(s_spi, MSS_SPI_SLAVE_0);
-
-    spi->COMMAND |= (SPI_CMD_TX_FIFO_RESET | SPI_CMD_RX_FIFO_RESET);
-    spi->CONTROL &= ~SPI_CTRL_ENABLE;
-    spi->FRAMESUP = total & SPI_FRAMESUP_MASK;
-    spi->CONTROL = (spi->CONTROL & ~SPI_CTRL_TXRXDFCOUNT_MASK)
-                   | ((total << SPI_CTRL_TXRXDFCOUNT_SHIFT) & SPI_CTRL_TXRXDFCOUNT_MASK);
-    spi->FRAMESIZE = 8U;
-    spi->CONTROL |= SPI_CTRL_ENABLE;
-
-    while (rx_idx < total)
-    {
-        if (0U == (spi->STATUS & SPI_STATUS_RX_FIFO_EMPTY))
-        {
-            uint8_t b = (uint8_t)spi->RX_DATA;
-
-            if (rx_idx >= cmd_len)
-            {
-                rd[rx_idx - cmd_len] = b;
-            }
-            rx_idx++;
-            in_flight--;
-            idle = 0U;
-        }
-        else if (++idle >= XFER_POLL_LIMIT)
-        {
-            status = SPI_FLASH_ERR_BUS;
-            break;
-        }
-
-        if ((tx_idx < total) && (in_flight < SPI_RX_FIFO_SIZE) &&
-            (0U == (spi->STATUS & SPI_STATUS_TX_FIFO_FULL)))
-        {
-            spi->TX_DATA = (tx_idx < cmd_len) ? cmd[tx_idx] : 0xFFU;
-            tx_idx++;
-            in_flight++;
-        }
-    }
-
-    MSS_SPI_clear_slave_select(s_spi, MSS_SPI_SLAVE_0);
-    return status;
+    return (SPI_XFER_OK == spi_xfer(s_spi, cmd, cmd_len, rd, rd_len)) ? SPI_FLASH_OK : SPI_FLASH_ERR_BUS;
 }
 
 static spi_flash_status_t read_status(uint8_t *sr)
 {
     const uint8_t cmd = CMD_READ_STATUS;
 
-    return spi_xfer(&cmd, 1U, sr, 1U);
+    return xfer(&cmd, 1U, sr, 1U);
 }
 
 /* WREN, then check that the latch is set: a part that is busy, or a command
@@ -121,7 +54,7 @@ static spi_flash_status_t write_enable(void)
 {
     const uint8_t cmd = CMD_WRITE_ENABLE;
     uint8_t sr = 0U;
-    spi_flash_status_t st = spi_xfer(&cmd, 1U, NULL, 0U);
+    spi_flash_status_t st = xfer(&cmd, 1U, NULL, 0U);
 
     if (SPI_FLASH_OK == st)
     {
@@ -153,7 +86,7 @@ spi_flash_status_t spi_flash_read_id(uint8_t id[3])
 {
     const uint8_t cmd = CMD_READ_ID;
 
-    return spi_xfer(&cmd, 1U, id, 3U);
+    return xfer(&cmd, 1U, id, 3U);
 }
 
 spi_flash_status_t spi_flash_wait_ready(uint32_t *polls)
@@ -190,7 +123,7 @@ spi_flash_status_t spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len)
         uint32_t n = (len < XFER_MAX_DATA) ? len : XFER_MAX_DATA;
 
         put_header(CMD_READ, addr);
-        st = spi_xfer(s_cmd, HEADER_SIZE, buf, n);
+        st = xfer(s_cmd, HEADER_SIZE, buf, n);
         addr += n;
         buf += n;
         len -= n;
@@ -214,7 +147,7 @@ spi_flash_status_t spi_flash_program(uint32_t addr, const uint8_t *data, uint32_
         {
             put_header(CMD_PAGE_PROGRAM, addr);
             (void)memcpy(&s_cmd[HEADER_SIZE], data, n);
-            st = spi_xfer(s_cmd, HEADER_SIZE + n, NULL, 0U);
+            st = xfer(s_cmd, HEADER_SIZE + n, NULL, 0U);
         }
         if (SPI_FLASH_OK == st)
         {
@@ -236,7 +169,7 @@ spi_flash_status_t spi_flash_erase_sector(uint32_t addr)
     if (SPI_FLASH_OK == st)
     {
         put_header(CMD_SECTOR_ERASE, addr);
-        st = spi_xfer(s_cmd, HEADER_SIZE, NULL, 0U);
+        st = xfer(s_cmd, HEADER_SIZE, NULL, 0U);
     }
     if (SPI_FLASH_OK == st)
     {
