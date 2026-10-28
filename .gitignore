@@ -15,3 +15,6 @@ build*/
 
 # CMake presets of this machine (see CMakeUserPresets.json.example)
 /CMakeUserPresets.json
+
+# VS Code settings of this machine (see .vscode/settings.json.example)
+/.vscode/settings.json

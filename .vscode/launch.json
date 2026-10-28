@@ -1,0 +1,60 @@
+{
+    // gdb against Renode's own GDB server (no OpenOCD). Needs the C/C++
+    // extension (cppdbg) and CMake Tools, and the settings mpfs.gdb /
+    // mpfs.renode (.vscode/settings.json.example). See "Debugging in VS Code"
+    // in the README.
+    //
+    // The gdb commands are the SoftConsole Renode launcher's: symbols load
+    // before connecting (cppdbg's -file-exec-and-symbols on "program"), never
+    // after; 'monitor start' starts the emulation, then gdb continues the
+    // harts from the physical reset vector to s_mode_main.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // Builds, starts Renode (paused), connects, runs to s_mode_main.
+            // Stopping the session also stops Renode.
+            "name": "Debug in Renode",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.launchTargetPath}",
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "miDebuggerPath": "${config:mpfs.gdb}",
+            "miDebuggerServerAddress": "localhost:3333",
+            "setupCommands": [
+                { "text": "set $target_riscv=1" },
+                { "text": "set mem inaccessible-by-default off" },
+                { "text": "set riscv use-compressed-breakpoints on" }
+            ],
+            "postRemoteConnectCommands": [
+                { "text": "monitor start" },
+                { "text": "tbreak s_mode_main" }
+            ],
+            "launchCompleteCommand": "exec-continue",
+            "preLaunchTask": "Renode: start for debugging",
+            "postDebugTask": "Renode: stop"
+        },
+        {
+            // Connects to a Renode that is already listening on port 3333
+            // (started with renode/debug.resc, or by the task above) and
+            // stops wherever the harts are. Renode keeps running afterwards.
+            "name": "Attach to running Renode",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.launchTargetPath}",
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "miDebuggerPath": "${config:mpfs.gdb}",
+            "miDebuggerServerAddress": "localhost:3333",
+            "setupCommands": [
+                { "text": "set $target_riscv=1" },
+                { "text": "set mem inaccessible-by-default off" },
+                { "text": "set riscv use-compressed-breakpoints on" }
+            ],
+            "postRemoteConnectCommands": [
+                { "text": "monitor start" }
+            ],
+            "launchCompleteCommand": "None"
+        }
+    ]
+}

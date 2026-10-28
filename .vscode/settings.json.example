@@ -1,0 +1,9 @@
+{
+    // Copy to .vscode/settings.json (git-ignored), or add these two keys to
+    // an existing one, and adjust the SoftConsole folder.
+    "mpfs.renode": "C:/Microchip/SoftConsole-v2022.2-RISC-V-747/renode/bin/Renode.exe",
+    "mpfs.gdb": "C:/Microchip/SoftConsole-v2022.2-RISC-V-747/riscv-unknown-elf-gcc/bin/riscv64-unknown-elf-gdb.exe",
+
+    // CMake Tools: use CMakePresets.json (debug / release).
+    "cmake.useCMakePresets": "always"
+}

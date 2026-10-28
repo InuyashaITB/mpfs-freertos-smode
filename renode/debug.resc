@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: MIT
+#
+# One board, loaded as the SoftConsole debug launcher loads it, waiting for a
+# debugger: the GDB server listens on $gdb_port and the emulation starts when
+# gdb continues. Used by the VS Code tasks (.vscode/tasks.json); also usable
+# by hand, from the project root (paths are relative to the working
+# directory):
+#
+#   renode -e "include @renode/debug.resc"
+#   renode -e "$elf=@build-cmake/debug/examples/freertos-demo/freertos-demo.elf; include @renode/debug.resc"
+#
+# then connect gdb to localhost:3333, 'monitor start', continue (see
+# "Debugging in VS Code" in the README for the gdb commands).
+#
+# Variables:
+#   $elf        program, default the make build's
+#   $gdb_port   default 3333 (the SoftConsole launcher's port)
+#
+# UART: mmuart1 opens in an analyzer window; with no GUI (--disable-xwt),
+# add 'sysbus.mmuart1 CreateFileBackend @/absolute/path true' instead.
+
+$elf?=@build/examples/freertos-demo/freertos-demo.elf
+$gdb_port?=3333
+
+include @renode/models/ProtoSpiDevice.cs
+include @renode/models/NorFlash.cs
+include @renode/models/MpfsI2c.cs
+include @renode/models/I2cEeprom.cs
+
+mach create "board0"
+machine LoadPlatformDescription @platforms/cpus/polarfire-soc.repl
+machine LoadPlatformDescription @renode/mpfs-ddr-38bit-cached-3gib.repl
+machine UnregisterFromParent sysbus.i2c0
+machine LoadPlatformDescription @renode/mpfs-sim-peripherals.repl
+sysbus.eth MAC "02:4d:50:46:53:00"
+
+# MPFS_SPI warns on every transfer (see renode/README.md).
+logLevel 3 sysbus.spi0
+logLevel 3 sysbus.spi1
+
+showAnalyzer sysbus.mmuart1
+
+# LoadELF uses the physical (load) addresses; every hart starts at the
+# physical reset vector, as the launcher's 'thread apply all set $pc' does.
+sysbus LoadELF $elf
+sysbus.e51 PC 0x08000000
+sysbus.u54_1 PC 0x08000000
+sysbus.u54_2 PC 0x08000000
+sysbus.u54_3 PC 0x08000000
+sysbus.u54_4 PC 0x08000000
+
+# All harts are gdb threads (e51 is thread 1, u54_1 thread 2). The emulation
+# stays paused: gdb sends 'monitor start' after connecting, then continues
+# (gdb's continue alone does not start the emulation).
+machine StartGdbServer $gdb_port
+echo "debug.resc: GDB server ready on port"
+echo $gdb_port

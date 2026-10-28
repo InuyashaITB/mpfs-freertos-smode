@@ -655,6 +655,64 @@ never land inside it. That is the only time `spin` can block.
   `vListInsert()` with `xTickCount` stuck, the yield is not being taken:
   check that `configPORT_YIELD_VIA_SBI_IPI` is 1 when running on Renode.
 
+## Debugging in VS Code
+
+Renode is its own gdb server, so no OpenOCD is involved: `renode/debug.resc`
+loads one board exactly as the SoftConsole launcher does and starts
+`machine StartGdbServer 3333`, and VS Code's gdb front end (`cppdbg`)
+connects to it with the launcher's gdb commands.
+
+Needs the **C/C++** extension (`ms-vscode.cpptools`, for `cppdbg`) and
+**CMake Tools** (the build and the ELF path come from the CMake preset, see
+"Building with CMake"). Tell VS Code where SoftConsole's Renode and gdb are:
+copy `.vscode/settings.json.example` to `.vscode/settings.json` (git-ignored)
+or add its two keys to your settings, adjusting the SoftConsole folder:
+
+```json
+"mpfs.renode": "C:/Microchip/SoftConsole-v2022.2-RISC-V-747/renode/bin/Renode.exe",
+"mpfs.gdb": "C:/Microchip/SoftConsole-v2022.2-RISC-V-747/riscv-unknown-elf-gcc/bin/riscv64-unknown-elf-gdb.exe"
+```
+
+Then, in *Run and Debug*:
+
+| Configuration | What it does |
+|---|---|
+| **Debug in Renode** | Builds `freertos-demo` (CMake Tools), starts Renode (task *Renode: start for debugging*: board paused, GDB server on 3333, MMUART1 in an analyzer window), connects, `monitor start`, runs to `s_mode_main`. Stopping the session stops Renode. |
+| **Attach to running Renode** | Connects to a Renode already listening on 3333 and stops wherever the harts are; Renode keeps running when you disconnect. |
+
+The Renode task's terminal is the Renode monitor (`--console`): commands
+such as `sysbus.spi0.flash Programs` or `sysbus.spi1.proto InjectEvent 0x42`
+can be typed there while debugging, or from the Debug Console as
+`-exec monitor <command>`.
+
+What the configurations do, and why (same lessons as the SoftConsole
+launcher, see "Debugging notes"):
+
+* Symbols are loaded before connecting (`program`, which cppdbg passes to
+  `-file-exec-and-symbols`), never after; `set riscv
+  use-compressed-breakpoints on` lets the virtual `tbreak s_mode_main` be
+  set while the MMU is still off.
+* Every hart starts at the physical reset vector `0x08000000`; Renode sets
+  the PCs itself (`debug.resc`), so there is no `thread apply all set $pc`.
+* `monitor start` is needed: gdb's continue resumes the harts only once the
+  emulation is running.
+* Each hart is a gdb thread (e51 = 1, u54_1 = 2, ...). The S-mode code
+  stops on thread 2.
+* M-mode breakpoints: in the Debug Console,
+  `-exec add-symbol-file ${workspaceFolder}/build-cmake/debug/examples/freertos-demo/freertos-demo.elf -o -0xffffffc000000000`
+  (with the real path), as in "Debugging notes".
+* The make build instead of CMake: replace `${command:cmake.launchTargetPath}`
+  in `.vscode/launch.json` and `.vscode/tasks.json` with
+  `${workspaceFolder}/build/examples/freertos-demo/freertos-demo.elf` and drop
+  the task's `dependsOn` (build with `make` first).
+* Without VS Code: `renode -e "include @renode/debug.resc"` from the project
+  root (`$elf` and `$gdb_port` can be set first, see the script), then any
+  gdb with the commands above, `target remote localhost:3333`,
+  `monitor start`, `continue`.
+* If the task never becomes ready, look at its terminal: a Renode script
+  error is printed there (for example "Address already in use" when another
+  Renode still holds port 3333).
+
 ## Simulated peripherals (branch `sim-peripherals`)
 
 Renode models for devices on the MSS SPI/I2C controllers and in the fabric,

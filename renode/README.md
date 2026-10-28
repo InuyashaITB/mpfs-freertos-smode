@@ -11,6 +11,7 @@ about running and testing.
 | `models/*.cs` | C# device models, compiled by Renode at run time |
 | `boards.resc` | Two boards, each loaded as the launcher loads one, on one Ethernet switch; defines `$run_and_report`. Shared by the next two |
 | `run-demo.resc` | `make sim`: runs the demo on both boards without a debugger, each board's MMUART1 to a file |
+| `debug.resc` | One board loaded as the launcher loads it, paused, with Renode's GDB server on port 3333: used by the VS Code debug configurations (see "Debugging in VS Code" in the top-level README) |
 | `run-host.resc` | `make sim-host`: the same plus the host bridge (`host-bridge.repl`) |
 | `host-bridge.repl` | The `SocketBridge` model on board 0's bus (localhost UDP 37001 → 37000) |
 | `host_bridge.py` | Host side of the bridge: `192.168.10.1` on the simulated network (Python 3, standard library) |
