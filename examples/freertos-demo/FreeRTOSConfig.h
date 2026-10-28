@@ -69,7 +69,16 @@
 #define configMAX_PRIORITIES                        ( 5 )
 #define configMINIMAL_STACK_SIZE                    ( 256 )      /* words */
 #define configMAX_TASK_NAME_LEN                     ( 12 )
-#define configTICK_TYPE_WIDTH_IN_BITS               TICK_TYPE_WIDTH_64_BITS
+/* 64-bit ticks (TickType_t is the 64-bit UBaseType_t in this port). Kernels
+ * older than V10.6 have no TICK_TYPE_WIDTH_* (FreeRTOS.h defines them before
+ * including this file from V10.6 on) and require configUSE_16_BIT_TICKS
+ * instead; V10.6 and later refuse both. See src/middleware/README.md,
+ * "Older FreeRTOS kernels". */
+#ifdef TICK_TYPE_WIDTH_64_BITS
+    #define configTICK_TYPE_WIDTH_IN_BITS           TICK_TYPE_WIDTH_64_BITS
+#else
+    #define configUSE_16_BIT_TICKS                  0
+#endif
 #define configIDLE_SHOULD_YIELD                     1
 #define configUSE_TASK_NOTIFICATIONS                1
 #define configTASK_NOTIFICATION_ARRAY_ENTRIES       1
@@ -135,6 +144,21 @@
 #define INCLUDE_xTaskAbortDelay                     0
 #define INCLUDE_xTaskGetHandle                      0
 #define INCLUDE_xTaskResumeFromISR                  1
+
+/*-----------------------------------------------------------
+ * Older kernels (before V11.0): defaults that newer kernels provide
+ *----------------------------------------------------------*/
+/* The S-mode port's portYIELD_FROM_ISR() uses the V11 ISR trace hooks. */
+#ifndef traceISR_EXIT
+    #define traceISR_EXIT()
+#endif
+#ifndef traceISR_EXIT_TO_SCHEDULER
+    #define traceISR_EXIT_TO_SCHEDULER()
+#endif
+/* Used by FreeRTOS+TCP V4. Same definition as V11's projdefs.h. */
+#ifndef pdTICKS_TO_MS
+    #define pdTICKS_TO_MS( xTimeInTicks )    ( ( TickType_t ) ( ( ( uint64_t ) ( xTimeInTicks ) * ( uint64_t ) 1000U ) / ( uint64_t ) configTICK_RATE_HZ ) )
+#endif
 
 #ifndef __ASSEMBLER__
     /* Assert: report through smode_diag_puts() and park (weak default in
