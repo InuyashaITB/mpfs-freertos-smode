@@ -706,6 +706,11 @@ stopping either ends both and stops Renode. Things to know:
   Only board1's session sends `monitor start`, so both boards are under a
   debugger before anything runs; a second `start` from the other session
   upsets the GDB servers.
+* The configurations take the ELF from `${command:cmake.getLaunchTargetPath}`,
+  which does not build (the Renode task builds first).
+  `cmake.launchTargetPath` builds on every use: the two sessions resolving it
+  at the same time collide, one gets no program ("No executable target was
+  found to launch") and never connects, and the UARTs stay blank.
 * The two per-board configurations are hidden: they only work as the
   compound. To debug one board while the other just runs, start
   `renode -e "include @renode/debug-dual.resc"` by hand, attach one gdb, and
@@ -740,7 +745,7 @@ launcher, see "Debugging notes"):
 * M-mode breakpoints: in the Debug Console,
   `-exec add-symbol-file ${workspaceFolder}/build-cmake/debug/examples/freertos-demo/freertos-demo.elf -o -0xffffffc000000000`
   (with the real path), as in "Debugging notes".
-* The make build instead of CMake: replace `${command:cmake.launchTargetPath}`
+* The make build instead of CMake: replace `${command:cmake.getLaunchTargetPath}`
   in `.vscode/launch.json` and `.vscode/tasks.json` with
   `${workspaceFolder}/build/examples/freertos-demo/freertos-demo.elf` and drop
   the task's `dependsOn` (build with `make` first).

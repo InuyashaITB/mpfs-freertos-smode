@@ -9,6 +9,11 @@
     // after; 'monitor start' starts the emulation, then gdb continues the
     // harts from the physical reset vector to s_mode_main.
     //
+    // "program" uses cmake.getLaunchTargetPath, which does not build (the
+    // Renode tasks build first): cmake.launchTargetPath builds on every
+    // use, and the compound's two sessions resolving it at once collide
+    // ("No executable target was found to launch", no session).
+    //
     // cppdbg treats the stop gdb reports on connecting as the launch's own:
     // it resumes from it (unless stopAtConnect), and a stop it did not ask
     // for is passed on only with the settings noted below.
@@ -20,7 +25,7 @@
             "name": "Debug in Renode",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${command:cmake.launchTargetPath}",
+            "program": "${command:cmake.getLaunchTargetPath}",
             "cwd": "${workspaceFolder}",
             "MIMode": "gdb",
             "miDebuggerPath": "${config:mpfs.gdb}",
@@ -50,7 +55,7 @@
             "name": "Attach to running Renode",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${command:cmake.launchTargetPath}",
+            "program": "${command:cmake.getLaunchTargetPath}",
             "cwd": "${workspaceFolder}",
             "MIMode": "gdb",
             "miDebuggerPath": "${config:mpfs.gdb}",
@@ -74,7 +79,7 @@
             "name": "board0 (both boards)",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${command:cmake.launchTargetPath}",
+            "program": "${command:cmake.getLaunchTargetPath}",
             "cwd": "${workspaceFolder}",
             "MIMode": "gdb",
             "miDebuggerPath": "${config:mpfs.gdb}",
@@ -98,7 +103,7 @@
             "name": "board1 (both boards)",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${command:cmake.launchTargetPath}",
+            "program": "${command:cmake.getLaunchTargetPath}",
             "cwd": "${workspaceFolder}",
             "MIMode": "gdb",
             "miDebuggerPath": "${config:mpfs.gdb}",

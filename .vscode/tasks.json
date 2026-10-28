@@ -25,7 +25,7 @@
                 "--console",
                 "--plain",
                 "-e",
-                "$elf=@${command:cmake.launchTargetPath}; include @renode/debug.resc"
+                "$elf=@${command:cmake.getLaunchTargetPath}; include @renode/debug.resc"
             ],
             "options": { "cwd": "${workspaceFolder}" },
             "dependsOn": "CMake: build freertos-demo",
@@ -55,7 +55,7 @@
                 "--console",
                 "--plain",
                 "-e",
-                "$elf=@${command:cmake.launchTargetPath}; include @renode/debug-dual.resc"
+                "$elf=@${command:cmake.getLaunchTargetPath}; include @renode/debug-dual.resc"
             ],
             "options": { "cwd": "${workspaceFolder}" },
             "dependsOn": "CMake: build freertos-demo",
