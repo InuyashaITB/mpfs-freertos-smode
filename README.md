@@ -59,6 +59,10 @@ After the handoff, M-mode on U54_1 only runs for traps from S-mode:
 
 ## Libraries and applications
 
+[`docs/library-build-and-hello-world.md`](docs/library-build-and-hello-world.md)
+is a short guide to this section, written for review: the library build, the
+install tree, the boot path, and a minimal hello-world application.
+
 | Library | Contents |
 |---|---|
 | `libmpfs_smode_boot.a` | MPFS HAL (start-up, `mss_entry.S`, PLIC/CLINT/PMP/L2, NWC), `u54_1()`, M-mode SBI shim, Sv39 bring-up, `smode_start`, diagnostics (`src/platform/mpfs_hal`, `src/platform/hal`, `src/smode`) |
@@ -340,10 +344,14 @@ With a bootloader:
 ### Writing an application
 
 Start from `examples/freertos-demo/Makefile`, or include `mpfs_smode.mk` from
-the install tree in your own Makefile:
+the install tree in your own Makefile. A complete minimal application (two C
+files, a Makefile and a CMakeLists.txt) is in
+[`docs/library-build-and-hello-world.md`](docs/library-build-and-hello-world.md). The skeleton:
 
 ```make
-MPFS_SMODE_DIR := C:/mpfs-smode            # the 'make install' PREFIX
+# The 'make install' PREFIX. Keep comments off this line: make would keep the
+# spaces before the '#' in the value.
+MPFS_SMODE_DIR := C:/mpfs-smode
 include $(MPFS_SMODE_DIR)/mpfs_smode.mk
 
 OBJS := build/main.o
