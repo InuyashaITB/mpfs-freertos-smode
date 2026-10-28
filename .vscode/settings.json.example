@@ -1,9 +1,35 @@
 {
-    // Copy to .vscode/settings.json (git-ignored), or add these two keys to
-    // an existing one, and adjust the SoftConsole folder.
+    // Copy to .vscode/settings.json (git-ignored), or add these keys to an
+    // existing one, and adjust the SoftConsole folder (three places).
     "mpfs.renode": "C:/Microchip/SoftConsole-v2022.2-RISC-V-747/renode/bin/Renode.exe",
     "mpfs.gdb": "C:/Microchip/SoftConsole-v2022.2-RISC-V-747/riscv-unknown-elf-gcc/bin/riscv64-unknown-elf-gdb.exe",
 
     // CMake Tools: use CMakePresets.json (debug / release).
-    "cmake.useCMakePresets": "always"
+    "cmake.useCMakePresets": "always",
+
+    // CMake Tools' own Debug button (status bar, CMake view) ignores
+    // launch.json and makes a configuration for running the program on this
+    // PC, looking for gdb next to CMAKE_C_COMPILER in the cache (not there
+    // with this toolchain file: "No compiler found in cache file"). This
+    // makes it do what "Debug in Renode" does. miDebuggerPath must be an
+    // absolute path here (no ${config:...}).
+    "cmake.debugConfig": {
+        "type": "cppdbg",
+        "MIMode": "gdb",
+        "miDebuggerPath": "C:/Microchip/SoftConsole-v2022.2-RISC-V-747/riscv-unknown-elf-gcc/bin/riscv64-unknown-elf-gdb.exe",
+        "miDebuggerServerAddress": "localhost:3333",
+        "cwd": "${workspaceFolder}",
+        "setupCommands": [
+            { "text": "set $target_riscv=1" },
+            { "text": "set mem inaccessible-by-default off" },
+            { "text": "set riscv use-compressed-breakpoints on" }
+        ],
+        "postRemoteConnectCommands": [
+            { "text": "monitor start" },
+            { "text": "tbreak s_mode_main" }
+        ],
+        "launchCompleteCommand": "exec-continue",
+        "preLaunchTask": "Renode: start for debugging",
+        "postDebugTask": "Renode: stop"
+    }
 }

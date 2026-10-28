@@ -680,6 +680,15 @@ Then, in *Run and Debug*:
 | **Debug in Renode** | Builds `freertos-demo` (CMake Tools), starts Renode (task *Renode: start for debugging*: board paused, GDB server on 3333, MMUART1 in an analyzer window), connects, `monitor start`, runs to `s_mode_main`. Stopping the session stops Renode. |
 | **Attach to running Renode** | Connects to a Renode already listening on 3333 and stops wherever the harts are; Renode keeps running when you disconnect. |
 
+Start these from *Run and Debug* (or F5), not from CMake Tools' own Debug
+button (status bar / CMake view): that button ignores `launch.json`, builds a
+configuration for running the program on the PC, and stops with "No compiler
+found in cache file" (it looks for gdb next to `CMAKE_C_COMPILER` in the
+cache, which this toolchain file does not put there). To make that button
+debug in Renode too, copy the `cmake.debugConfig` block from
+`.vscode/settings.json.example` (its `miDebuggerPath` must be an absolute
+path).
+
 The Renode task's terminal is the Renode monitor (`--console`): commands
 such as `sysbus.spi0.flash Programs` or `sysbus.spi1.proto InjectEvent 0x42`
 can be typed there while debugging, or from the Debug Console as
