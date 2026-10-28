@@ -259,8 +259,8 @@ boundaries.
 | 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event. **Done**: `make sim` passes in Renode 1.13.1 and the SoftConsole run shows every protocol step PASS (see "Phase 4 status") |
 | 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames exchanged between the two simulated boards. **Implemented; two-board `make sim` passes in Renode 1.13.1** (see "Phase 5a status") |
 | 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo between board 0 and board 1. **Implemented; two-board `make sim` passes in Renode 1.13.1** (see "Phase 5b status") |
-| 5c | *(optional)* `SocketBridge` model + user-mode host helper | Host helper answers ARP/ping from a board |
-| 6 | Docs (README, boot doc), Robot tests, LIBRARY-FIXED marking | Tests green; docs updated |
+| 5c | *(optional)* `SocketBridge` model + user-mode host helper | Host helper answers ARP/ping from a board. **Done: `make sim-host` passes in Renode 1.13.1** (see "Phase 5c status") |
+| 6 | Docs (README, boot doc), Robot tests, LIBRARY-FIXED marking | Tests green; docs updated. **Done** (see "Phase 6 status") |
 
 Phases 2–4 are independent once Phase 1 is done. Phase 5 is the largest
 and riskiest.
@@ -556,9 +556,12 @@ board 1: [S] ETH: board 1, MAC 02:4d:50:46:53:01, LiteEth at 0x40000000
   MDIO `0x4000_1000` and buffers `0x4001_0000`, IRQ → PLIC 120 (F2M_2). Its
   1.13 register map and quirks are in `renode/README.md`. Found by
   experiment in 1.13.1:
-  - The switch delivers unicast frames only to the interface whose model MAC
-    matches; broadcast goes to all. So the model MAC is set to the
-    firmware's.
+  - The switch seemed to deliver unicast frames only to the interface whose
+    model MAC matches. *Corrected in Phase 5c:* it is a learning switch,
+    keyed on the source MACs of the frames, and the model MAC does not
+    matter. The experiment's destination had simply never sent a frame.
+    `make sim` passes without setting it. It is still set, for readable
+    logs.
   - A repl cannot set a `MACAddress` (type mismatch), but the monitor can.
     The launcher and `run-demo.resc` set it.
   - `MPFS_GPIO.OnGPIO` is ignored for a pin not configured as an input, so
@@ -640,3 +643,72 @@ board 1: the same, with the ids swapped
   (10 × 500 ms, longer than the 3 s run) and `make sim` fails on the missing
   NET lines.
 - **Not done (5c, optional):** host access through a `SocketBridge` model.
+
+## Phase 5c status
+
+**Done; `make sim-host` passes in Renode 1.13.1.** The host helper's
+report:
+
+```
+host: listening on 127.0.0.1:37000 as 192.168.10.1 (02:4d:50:46:53:fe)
+host: ARP: 192.168.10.11 is at 02:4d:50:46:53:01
+host: ARP: 192.168.10.10 is at 02:4d:50:46:53:00
+host: ping 192.168.10.10: PASS
+host: ping 192.168.10.11: PASS
+host: ping from 192.168.10.11 answered
+host: ping from 192.168.10.10 answered
+```
+
+Both boards print `[S] NET: ping host 192.168.10.1: PASS`.
+
+- **`renode/models/SocketBridge.cs`:** an `IMACInterface` on the switch,
+  registered on board 0's bus at `0x40002000`. It relays frames (without
+  FCS) to and from UDP on localhost: it sends to 37000 and listens on 37001.
+  No TAP and no administrator rights.
+- **`renode/host_bridge.py`:** Python 3, standard library only. It answers
+  ARP, ICMP echo and UDP echo for `192.168.10.1`, pings the boards given
+  with `--ping`, and writes a report.
+- **Scripts:**
+  - `renode/boards.resc` holds the two-board set-up and a `$run_and_report`
+    macro, shared by `run-demo.resc` (`make sim`) and the new
+    `run-host.resc` (`make sim-host`).
+  - `make sim-host` starts the helper in the background, runs Renode, stops
+    the helper, and checks both boards and the helper's report.
+- **Firmware:** `net_demo.c` pings the host after the TCP echo. Without a
+  bridge it reports `no reply from host ... (no host bridge)`, which is not
+  a failure.
+- **Correction to Phase 5a:** Renode's switch is a learning switch, keyed on
+  source MACs. The LiteEth model's `MAC` does not have to match the
+  firmware's: `make sim` passes without setting it. It is still set, for
+  readable logs. The docs are corrected.
+- **Not done:** TCP from host programs. The helper is not a TCP/IP stack;
+  that would need a user-mode stack (e.g. slirp) behind the bridge.
+
+## Phase 6 status
+
+**Done.**
+- **Robot Framework tests:** `renode/tests/mpfs-demo.robot`, run with
+  `make robot RENODE_TEST=<renode-test>`.
+  - 7 tests on the two-board set-up: S-mode/Sv39 with the fabric mapping,
+    each peripheral self-test, scheduler start, ping and TCP echo in both
+    directions, and an injected protocol-device event.
+  - All pass in Renode 1.13.1 (robotframework 4.0.1) in about 45 s.
+  - A wrong expected line fails as it should.
+  - Renode 1.13 notes (`path add`, no `cd`, Robot's two-space argument
+    separator) are in `renode/README.md`.
+- **Docs:**
+  - README: the "Simulated peripherals" section (devices, test commands),
+    the expected launcher output with the self-tests, the hardware
+    limitations, the library table (`libfreertos_tcp.a`), the settings,
+    the heap in DDR and the file table.
+  - `renode/README.md`: every model and script, the headless runs, the
+    Robot tests and the 1.13 quirks.
+  - `docs/boot-to-smode.md`: the fabric mapping.
+- **LIBRARY-FIXED marking:**
+  - `FreeRTOSIPConfig.h` (`FREERTOS_IP_CONFIG_DIR`), marked in the file, in
+    `mpfs_smode.mk` / `MpfsSmodeConfig.cmake` and in the README's settings
+    table, and recorded in `build_config`;
+  - the Sv39 fabric window (`sv39.h`).
+- **Left as is:** the Windows `make sim` set-up (PATH with SoftConsole's
+  `build_tools\bin`, `RENODE` = the executable) is documented but not
+  automated. A two-board SoftConsole launcher was discussed, but not added.

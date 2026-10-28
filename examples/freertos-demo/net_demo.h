@@ -8,7 +8,9 @@
  * and the peer is the other id. Two tasks:
  *   echo server  TCP port 7, echoes whatever a client sends
  *   client       once the network is up: pings the peer, then connects to
- *                its echo server, sends NET_ECHO_BYTES and checks the echo
+ *                its echo server, sends NET_ECHO_BYTES and checks the echo;
+ *                then pings the host 192.168.10.1, which exists when
+ *                renode/host_bridge.py is attached ('make sim-host')
  * Results, the same on both boards (make sim checks them):
  *   [S] NET: ping board <peer>: PASS (...)
  *   [S] NET: TCP echo with board <peer>: PASS (...)

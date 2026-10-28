@@ -29,7 +29,9 @@
 # LIBRARY-FIXED (compiled into the libraries): MARCH, LIBC_SPECS,
 # LOADED_BY_BOOTLOADER, MPFS_HAL_FIRST_HART, MPFS_HAL_LAST_HART. An
 # application that sets one of these variables to a different value stops
-# with an error; rebuild the libraries to change them. Application-level:
+# with an error; rebuild the libraries to change them. The installed
+# FreeRTOSConfig.h and FreeRTOSIPConfig.h are LIBRARY-FIXED too: they are the
+# copies the libraries were compiled with. Application-level:
 # the toolchain (CROSS_COMPILE), CMAKE_BUILD_TYPE (defaults to the
 # libraries'), MPFS_SMODE_LINKER_SCRIPT.
 

@@ -18,6 +18,11 @@
 #   make sim RENODE=<renode>  build, run the demo headless in Renode and check
 #                             its UART output (renode/run-demo.resc,
 #                             renode/expected-uart.txt); see renode/README.md
+#   make sim-host RENODE=<renode>  the same plus the host on the simulated
+#                             network (renode/run-host.resc, host_bridge.py;
+#                             needs Python 3)
+#   make robot RENODE_TEST=<renode-test>  the Robot Framework tests
+#                             (renode/tests/mpfs-demo.robot)
 #
 # Variables given here (BUILD_TYPE, CROSS_COMPILE, ...) are passed on to both
 # Makefiles; see src/mk/toolchain.mk.
@@ -33,7 +38,7 @@ APP_ARGS := MPFS_SMODE_DIR=../../build/dist OUT_DIR=../../build/$(APP_DIR)
 # PREFIX as given here, made usable from src/ (absolute paths kept).
 INSTALL_PREFIX = $(if $(filter /% %:%,$(subst \,/,$(PREFIX))),$(PREFIX),../$(PREFIX))
 
-.PHONY: all libs app install clean sim
+.PHONY: all libs app install clean sim sim-host robot
 
 all: app
 
@@ -75,3 +80,40 @@ endif
 	-"$(RENODE)" $(RENODE_FLAGS) -e '$$uart_log=@$(CURDIR)/$(SIM_DIR)/uart1.txt; $$uart_log_b=@$(CURDIR)/$(SIM_DIR)/uart1-board1.txt; $$runtime="$(SIM_TIME)"; include @renode/run-demo.resc' < /dev/null > $(SIM_DIR)/renode.log 2>&1
 	sh renode/check-uart.sh $(SIM_DIR)/uart1.txt $(SIM_DIR)/renode.log renode/expected-uart.txt renode/expected-uart-board0.txt
 	sh renode/check-uart.sh $(SIM_DIR)/uart1-board1.txt $(SIM_DIR)/renode.log renode/expected-uart.txt
+
+# The same two boards plus the host: renode/host_bridge.py (Python 3) runs as
+# 192.168.10.1 behind the SocketBridge model (localhost UDP 37000/37001, no
+# TAP, no administrator rights), pings both boards and answers their pings.
+#   PYTHON        Python 3 interpreter (default: python3; on Windows e.g.
+#                 PYTHON=py or the full path to python.exe)
+# Extra outputs in build/sim: host.txt (the helper's events, checked against
+# renode/expected-host.txt), host-bridge.log.
+PYTHON ?= python3
+
+sim-host: app
+ifeq ($(strip $(RENODE)),)
+	$(error RENODE is not set: make sim-host RENODE=<path to Renode/Renode.exe>)
+endif
+	@mkdir -p $(SIM_DIR)
+	@rm -f $(SIM_DIR)/uart1.txt $(SIM_DIR)/uart1-board1.txt $(SIM_DIR)/host.txt
+	@echo "SIM $(SIM_TIME) s in Renode with the host bridge, log: $(SIM_DIR)/renode.log"
+	-"$(PYTHON)" renode/host_bridge.py --ping 192.168.10.10 --ping 192.168.10.11 \
+	    --duration 600 --report $(SIM_DIR)/host.txt > $(SIM_DIR)/host-bridge.log 2>&1 & \
+	  helper=$$!; \
+	  "$(RENODE)" $(RENODE_FLAGS) -e '$$uart_log=@$(CURDIR)/$(SIM_DIR)/uart1.txt; $$uart_log_b=@$(CURDIR)/$(SIM_DIR)/uart1-board1.txt; $$runtime="$(SIM_TIME)"; include @renode/run-host.resc' < /dev/null > $(SIM_DIR)/renode.log 2>&1; \
+	  kill $$helper 2>/dev/null; wait $$helper 2>/dev/null; true
+	sh renode/check-uart.sh $(SIM_DIR)/uart1.txt $(SIM_DIR)/renode.log renode/expected-uart.txt renode/expected-uart-board0.txt renode/expected-host-board.txt
+	sh renode/check-uart.sh $(SIM_DIR)/uart1-board1.txt $(SIM_DIR)/renode.log renode/expected-uart.txt renode/expected-host-board.txt
+	sh renode/check-uart.sh $(SIM_DIR)/host.txt $(SIM_DIR)/host-bridge.log renode/expected-host.txt
+
+# Robot Framework tests (renode/tests/mpfs-demo.robot): the same two boards,
+# checked with terminal testers. renode-test comes with Renode and needs
+# Python 3 with Renode's tests/requirements.txt (robotframework==4.0.1, ...).
+#   RENODE_TEST   the renode-test script (required)
+# Results (report.html, log.html) in build/robot.
+robot: app
+ifeq ($(strip $(RENODE_TEST)),)
+	$(error RENODE_TEST is not set: make robot RENODE_TEST=<path to Renode's renode-test>)
+endif
+	@mkdir -p build/robot
+	"$(RENODE_TEST)" renode/tests/mpfs-demo.robot -r build/robot

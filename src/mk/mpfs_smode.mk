@@ -31,7 +31,9 @@
 # mk/toolchain.mk): MARCH, LIBC_SPECS, LOADED_BY_BOOTLOADER,
 # MPFS_HAL_FIRST_HART, MPFS_HAL_LAST_HART. They are taken from the install
 # tree; setting one to a different value stops the build. Rebuild the
-# libraries to change them.
+# libraries to change them. The configuration headers are LIBRARY-FIXED too:
+# include/freertos/FreeRTOSConfig.h and include/freertos_tcp/
+# FreeRTOSIPConfig.h are the copies the libraries were compiled with.
 
 ifndef MPFS_SMODE_DIR
   $(error Set MPFS_SMODE_DIR to the installed libraries before including mpfs_smode.mk)

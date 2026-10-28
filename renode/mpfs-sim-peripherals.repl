@@ -26,9 +26,10 @@ eeprom: I2C.I2cEeprom @ i2c0 0x50
 
 // Phase 5a: LiteEth soft MAC in the fabric, behind FIC3 (Renode's built-in
 // LiteX_Ethernet). CSRs, slot buffers, MDIO; IRQ -> F2M_2, PLIC 120.
-// Its MAC must match the firmware's (02:4d:50:46:53:<board id>): the switch
-// delivers unicast frames only to the interface whose MAC matches. A repl
-// cannot set a MACAddress in 1.13, so the launcher and run-demo.resc do it:
+// The launcher and run-demo.resc set its MAC to the firmware's
+// (02:4d:50:46:53:<board id>) so the switch's log names the board; the
+// switch itself learns addresses from the frames. A repl cannot set a
+// MACAddress in 1.13:
 //   sysbus.eth MAC "02:4d:50:46:53:00"
 eth: Network.LiteX_Ethernet @ {
         sysbus 0x40000000;

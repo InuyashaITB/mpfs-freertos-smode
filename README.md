@@ -475,9 +475,10 @@ the Libero XML, outside this project.
    run `make` in a shell.)
 3. Run the launch group **mpfs-freertos-smode Renode All-harts
    Start-platform-and-debug**. It adds 2 GiB of DDR to the Renode platform
-   (`renode/mpfs-ddr-38bit-cached-3gib.repl`), starts all harts at the
-   physical entry `0x08000000`, and stops at `s_mode_main` (virtual address,
-   MMU already on); press Resume. UART1 is shown by the launcher
+   (`renode/mpfs-ddr-38bit-cached-3gib.repl`) and the simulated devices
+   (see "Simulated peripherals" below), starts all harts at the physical
+   entry `0x08000000`, and stops at `s_mode_main` (virtual address, MMU
+   already on); press Resume. UART1 is shown by the launcher
    (`showAnalyzer sysbus.mmuart1`).
 
 Expected on UART1:
@@ -492,12 +493,25 @@ Expected on UART1:
 [S]   DDR buf0 VA 0xffffffc040000000 -> PA 0x1000000000 (1024 MiB)
 [S]   DDR buf1 VA 0xffffffc080000000 -> PA 0x1040000000 (1024 MiB)
 [S]   DDR buf2 VA 0xffffffc0c0000000 -> PA 0x1080000000 (1024 MiB)
+[S] SPI1 proto: ...                  (8 steps, then)
+[S] SPI1 proto (S-mode, ProtoSpiDevice): PASS
+[S] SPI0 flash: ...                  (ID + 5 steps, then)
+[S] SPI0 flash (S-mode, NorFlash model): PASS
+[S] NET: board 0, FreeRTOS+TCP on LiteEth, 192.168.10.10, peer 192.168.10.11
 [S] starting scheduler
 [S] scheduler running. Press 1, 2 or 3 to raise GPIO2_30, GPIO2_31 or F2M_0 interrupts.
+[S] I2C0 EEPROM: ...                 (4 steps, then)
+[S] I2C0 EEPROM (S-mode, MSS_I2C driver, interrupts): PASS
+[S] NET: up: 192.168.10.10/24, MAC 02:4d:50:46:53:00, PHY id 0x00221561, link up
 [S] tick=1000 sstatus=0x...4022 spin=... blink=4 mtimer->stip=1000 sbi=1010 ext=0 ddr_ok=9 ddr_bad=0 heap_free=...
 ...
+[S] NET: no reply from board 1 at 192.168.10.11 (single board?)
 [S] heartbeat #1: uptime 00:00:05 (tick 5000), heap free ... (min ...), stack headroom ... words
 ```
+
+The launcher emulates one board, so the network test has no peer: "no reply
+from board 1" is expected there. `make sim` runs two boards and gets the
+`NET: ping` / `NET: TCP echo ... PASS` lines (next section).
 
 The `heartbeat` task prints every 5 s. All task output goes through
 `prvPrintf()` in `app_main.c`, which holds a console mutex, so lines from
@@ -614,7 +628,55 @@ never land inside it. That is the only time `spin` can block.
   `vListInsert()` with `xTickCount` stuck, the yield is not being taken:
   check that `configPORT_YIELD_VIA_SBI_IPI` is 1 when running on Renode.
 
+## Simulated peripherals (branch `sim-peripherals`)
+
+Renode models for devices on the MSS SPI/I2C controllers and in the fabric,
+drivers for them, self-tests in the demo, and headless test runs. The
+devices, their protocols and Renode 1.13's quirks are documented in
+`renode/README.md`; the design and phase history in
+`docs/plan-simulated-peripherals.md`.
+
+| Device | Where | Firmware | Self-test result line |
+|---|---|---|---|
+| SPI NOR flash (`renode/models/NorFlash.cs`) | SPI0 | `spi_flash.c` | `SPI0 flash (S-mode, NorFlash model): PASS` |
+| Example-protocol SPI device with a data-ready interrupt (`ProtoSpiDevice.cs`) | SPI1, PLIC 119 | `proto_dev.c` | `SPI1 proto (S-mode, ProtoSpiDevice): PASS`, `SPI1 proto: data-ready interrupt, events: ...` |
+| I2C EEPROM (`I2cEeprom.cs`) behind our MSS I2C controller model (`MpfsI2c.cs`, replaces Renode's) | I2C0, PLIC 58 | `i2c_eeprom.c` on the vendor `MSS_I2C` driver (interrupt-driven) | `I2C0 EEPROM (S-mode, MSS_I2C driver, interrupts): PASS` |
+| LiteEth soft MAC (Renode's `LiteX_Ethernet`) + PHY | FIC3 `0x4000_0000`, PLIC 120 | `libfreertos_tcp.a` (FreeRTOS+TCP + `src/freertos_tcp/`), `net_demo.c` | `NET: ping board <n>: PASS`, `NET: TCP echo with board <n>: PASS` |
+| Host on the simulated network (`SocketBridge.cs` + `renode/host_bridge.py`) | switch, localhost UDP | `net_demo.c` | `NET: ping host 192.168.10.1: PASS` |
+
+The library parts this needed:
+* the S-mode HAL PLIC helpers;
+* the Sv39 identity map of the fabric window (gigapage 1);
+* `libfreertos_tcp.a`.
+
+The rest is in the demo.
+
+**Testing, from a shell with the build tools on PATH:**
+
+```sh
+make sim RENODE=<Renode executable>                 # two boards, UART checks (about 1 min)
+make sim-host RENODE=<Renode executable> PYTHON=python3  # the same + the host bridge
+make robot RENODE_TEST=<Renode's renode-test>       # Robot Framework tests
+```
+
+* **`make sim`:** runs two boards with the same ELF on one Ethernet switch.
+  A GPIO2_0 strap makes the second board board 1. Both boards' UART1
+  output is checked against `renode/expected-uart.txt` (and board 0 also
+  against `expected-uart-board0.txt`). Output is in `build/sim/`.
+* **`make sim-host`:** also starts `renode/host_bridge.py` as `192.168.10.1`.
+  It reaches the boards' switch over localhost UDP, with no TAP and no
+  administrator rights. It pings both boards and answers their pings.
+* **`make robot`:** runs `renode/tests/mpfs-demo.robot`. It needs Python 3
+  with Renode's test requirements (`robotframework==4.0.1`, `requests`,
+  `psutil`, `pyyaml`).
+
 ## Limitations / next steps
+
+* **Simulated peripherals on hardware:** the SPI/I2C devices are generic and
+  the drivers use only standard commands. The LiteEth MAC needs a Libero
+  design with LiteEth on FIC3 (and its interrupt on F2M_2), and the
+  FreeRTOS heap in DDR needs trained DDR (HSS, or the HAL's `DDR_SUPPORT`).
+  None of this has run on hardware.
 
 * **PMP is wide open** (entry 0 = whole address space RWX). Fine for Renode;
   on hardware restrict it to what S-mode needs. Note that the HAL's

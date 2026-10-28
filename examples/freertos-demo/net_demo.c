@@ -25,8 +25,10 @@
 #define NET_SUBNET_B            (168U)
 #define NET_SUBNET_C            (10U)
 #define NET_HOST_BASE           (10U)
+#define NET_HOST_PC             (1U)            /* renode/host_bridge.py */
 
 #define PING_ATTEMPTS           (10U)
+#define HOST_PING_ATTEMPTS      (4U)
 #define PING_TIMEOUT_MS         (500U)
 #define PING_BYTES              (32U)
 #define TCP_TIMEOUT_MS          (2000U)
@@ -152,14 +154,14 @@ static void vEchoServerTask(void *pvParameters)
 /*------------------------------------------------------------------------------
  * Client: ping, then TCP echo with the peer
  */
-static BaseType_t ping_peer(uint32_t *ms)
+static BaseType_t ping(uint32_t ip, uint32_t attempts, uint32_t *ms)
 {
-    for (uint32_t i = 0U; i < PING_ATTEMPTS; i++)
+    for (uint32_t i = 0U; i < attempts; i++)
     {
         const TickType_t t0 = xTaskGetTickCount();
 
         (void)xSemaphoreTake(s_ping_reply, 0);
-        if (pdFAIL == FreeRTOS_SendPingRequest(peer_ip(), PING_BYTES, pdMS_TO_TICKS(100U)))
+        if (pdFAIL == FreeRTOS_SendPingRequest(ip, PING_BYTES, pdMS_TO_TICKS(100U)))
         {
             vTaskDelay(pdMS_TO_TICKS(PING_TIMEOUT_MS));
             continue;
@@ -267,7 +269,7 @@ static void vClientTask(void *pvParameters)
             s_mac[4], s_mac[5], (unsigned long)info.phy_id,
             (pdFALSE != info.link_up) ? "up" : "down");
 
-    if (pdPASS != ping_peer(&ms))
+    if (pdPASS != ping(peer_ip(), PING_ATTEMPTS, &ms))
     {
         s_print("[S] NET: no reply from board %u at 192.168.10.%u (single board?)\r\n",
                 peer, (unsigned)(NET_HOST_BASE + peer));
@@ -288,6 +290,20 @@ static void vClientTask(void *pvParameters)
     else
     {
         s_print("[S] NET: TCP echo with board %u: FAIL (%s)\r\n", peer, err);
+    }
+
+    /* The host, if renode/host_bridge.py is attached through the
+     * SocketBridge model ('make sim-host'). Not a failure without it. */
+    if (pdPASS == ping(FreeRTOS_inet_addr_quick(NET_SUBNET_A, NET_SUBNET_B, NET_SUBNET_C, NET_HOST_PC),
+                       HOST_PING_ATTEMPTS, &ms))
+    {
+        s_print("[S] NET: ping host 192.168.10.%u: PASS (%lu ms)\r\n",
+                (unsigned)NET_HOST_PC, (unsigned long)ms);
+    }
+    else
+    {
+        s_print("[S] NET: no reply from host 192.168.10.%u (no host bridge)\r\n",
+                (unsigned)NET_HOST_PC);
     }
     vTaskDelete(NULL);
 }

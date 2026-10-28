@@ -5,10 +5,16 @@
 | `mpfs-ddr-38bit-cached-3gib.repl` | Adds 2 GiB of DDR at `0x10_4000_0000` for the Sv39 DDR window |
 | `mpfs-sim-peripherals.repl` | Simulated devices on the MSS SPI/I2C controllers and the fabric (LiteEth) |
 | `models/*.cs` | C# device models, compiled by Renode at run time |
-| `run-demo.resc` | Two boards, each loaded as the launcher loads one, on one Ethernet switch; runs the demo without a debugger, each board's MMUART1 to a file |
+| `boards.resc` | Two boards, each loaded as the launcher loads one, on one Ethernet switch; defines `$run_and_report`. Shared by the next two |
+| `run-demo.resc` | `make sim`: runs the demo on both boards without a debugger, each board's MMUART1 to a file |
+| `run-host.resc` | `make sim-host`: the same plus the host bridge (`host-bridge.repl`) |
+| `host-bridge.repl` | The `SocketBridge` model on board 0's bus (localhost UDP 37001 → 37000) |
+| `host_bridge.py` | Host side of the bridge: `192.168.10.1` on the simulated network (Python 3, standard library) |
 | `expected-uart.txt` | Lines both boards' UART output must contain (one per self-test) |
 | `expected-uart-board0.txt` | Lines only board 0 must show (the injected protocol event) |
+| `expected-host-board.txt`, `expected-host.txt` | `make sim-host`: lines both boards must show, and lines the host helper must report |
 | `check-uart.sh` | Checks a UART log against expected-line files (POSIX sh / busybox sh) |
+| `tests/mpfs-demo.robot` | Robot Framework tests (`make robot`) |
 
 Models are written against the **Renode 1.13** API (SoftConsole v2022.2):
 `Machine`, not the newer `IMachine`. Renode compiles a model when it is
@@ -25,7 +31,7 @@ include @renode/models/MpfsI2c.cs
 include @renode/models/I2cEeprom.cs
 machine UnregisterFromParent sysbus.i2c0      # replaced by MpfsI2c in the repl
 machine LoadPlatformDescription @renode/mpfs-sim-peripherals.repl
-sysbus.eth MAC "02:4d:50:46:53:00"            # must match the firmware's (a repl cannot set it)
+sysbus.eth MAC "02:4d:50:46:53:00"            # the firmware's MAC, for readable logs (a repl cannot set it)
 ```
 
 ## Headless run: `make sim`
@@ -91,6 +97,57 @@ include @renode/run-demo.resc
 Tested with the Linux build of Renode 1.13.1. On Windows, if Renode rejects
 `--console`, try `make sim RENODE=... RENODE_FLAGS=--disable-xwt`.
 
+## The host on the network: `make sim-host`
+
+`make sim` plus a host at `192.168.10.1`, with **no TAP device and no
+administrator rights**:
+* **`models/SocketBridge.cs`** is an interface on the boards' switch. Every
+  frame the switch sends it goes out as a UDP datagram (the frame, without
+  FCS) to `127.0.0.1:37000`. Every datagram arriving on `127.0.0.1:37001` goes
+  onto the switch.
+* **`host_bridge.py`** listens on 37000 and sends to 37001. As
+  `192.168.10.1` (MAC `02:4d:50:46:53:fe`) it:
+  * answers ARP requests and pings;
+  * echoes UDP datagrams to port 7 (the demo doesn't send any);
+  * with `--ping <ip>`, pings the boards until each answers.
+* **Checks:** the boards ping the host after their TCP echo. `make sim-host`
+  requires `NET: ping host 192.168.10.1: PASS` on both boards (in addition
+  to `make sim`'s lines), and the helper's report (`build/sim/host.txt`) to
+  show both boards answering and both pinging. Without the bridge (`make sim`,
+  the launcher) the boards print `no reply from host 192.168.10.1 (no host
+  bridge)`, which is not a failure.
+* **Running it by hand:** start the helper first, e.g. `python
+  renode/host_bridge.py --ping 192.168.10.10`, then Renode with
+  `run-host.resc` (same variables as `run-demo.resc`).
+* **Options:** `PYTHON=...` selects the interpreter (Windows: e.g.
+  `PYTHON=py`). The ports are `SocketBridge`'s `localPort` / `remotePort`
+  in `host-bridge.repl` and the helper's `--listen-port` / `--send-port`.
+* The helper is a minimal stack: ARP, ICMP echo and UDP echo, no TCP. Host
+  programs cannot open sockets to the boards through it.
+
+## Robot Framework tests: `make robot`
+
+`tests/mpfs-demo.robot` runs the same two boards (`boards.resc`) under
+Renode's `renode-test`. It checks the result lines with terminal testers
+while the boards run, and finishes by injecting a protocol-device event and
+waiting for the interrupt-driven fetch. 7 tests, about 45 s.
+
+```
+make robot RENODE_TEST=<Renode dir>/renode-test
+```
+
+* **Requirements:** Python 3 with Renode's `tests/requirements.txt`
+  (`robotframework==4.0.1`, `requests`, `psutil`, `pyyaml`). A virtual
+  environment works: put its `bin` (Windows: `Scripts`) first on PATH.
+* **Output:** results in `build/robot/` (`report.html`, `log.html`).
+* **Renode 1.13 notes:**
+  * Under `renode-test` Renode does not run in the project root, so the
+    suite adds it to the monitor's search path (`path add @<project>`); the
+    monitor has no `cd`.
+  * Robot splits arguments at two or more spaces, so expected lines must not
+    contain any.
+  * The tests share one emulation (no per-test teardown).
+
 ## Checking that the models loaded
 
 The launcher sends these commands through gdb (`monitor ...`). Errors from
@@ -151,11 +208,19 @@ gigapage 1 (`0x4000_0000`–`0x7FFF_FFFF`, RW) for it.
     That matches a standard clause 22 read. Writes reach the PHY
     bit-reversed (model bug); the driver only reads.
   * Frames are sent with the FCS appended; send at least 60 bytes.
-* **The switch** (`emulation CreateSwitch`) delivers a unicast frame only to
-  the interface whose `MAC` matches the destination, and broadcasts to all.
-  So the model's MAC must equal the firmware's: `sysbus.eth MAC
-  "02:4d:50:46:53:00"` in the launcher, and per board in `run-demo.resc`.
-  The repl cannot set it.
+* **The switch** (`emulation CreateSwitch`) is a learning switch:
+  * It remembers which interface each *source* MAC came from.
+  * It sends a frame for a learned destination only there; any other
+    destination goes to every other interface.
+  * The model's own `MAC` property plays no part. A board's first unicast
+    frame reaches the other board as soon as that board has sent anything,
+    which ARP guarantees.
+  * The launcher and `run-demo.resc` still set the model MAC to the
+    firmware's (`sysbus.eth MAC "02:4d:50:46:53:00"`), so the switch's
+    "Interface ... attached" log names the board. The repl cannot set it.
+  * An early Phase 5a experiment suggested the MAC had to match. It sent a
+    unicast frame to an address no interface had ever sent from, which a
+    learning switch does not deliver.
 * **Firmware:** FreeRTOS+TCP in `libfreertos_tcp` (`src/freertos_tcp/`:
   `liteeth.c` and `NetworkInterface_LiteEth.c`) and the demo's `net_demo.c`.
   * Each board, with IP `192.168.10.<10 + id>`, runs a TCP echo server on

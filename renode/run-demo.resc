@@ -15,98 +15,10 @@
 #                 top-level make builds)
 #   $runtime      emulated seconds to run after the first second (default "3")
 #
-# Every other path here is relative to the working directory, so start Renode
-# in the project root ($ORIGIN is not expanded inside paths in 1.13).
-#
-# The boards differ only in the GPIO2_0 strap (board id) and the LiteEth MAC,
-# which must match the firmware's (02:4d:50:46:53:<id>): the switch delivers
-# unicast frames only to the interface with that MAC.
+# The boards are set up by boards.resc (paths relative to the working
+# directory: start Renode in the project root).
 
-$elf?=@build/examples/freertos-demo/freertos-demo.elf
-$runtime?="3"
-
-include @renode/models/ProtoSpiDevice.cs
-include @renode/models/NorFlash.cs
-include @renode/models/MpfsI2c.cs
-include @renode/models/I2cEeprom.cs
-
-# One board: the platform, the DDR window, i2c0 replaced by MpfsI2c, the
-# simulated devices, and the program, with every hart at the physical reset
-# vector (as the debug launcher does with 'set $pc'). LoadELF uses the
-# physical (load) addresses.
-macro board
-"""
-    machine LoadPlatformDescription @platforms/cpus/polarfire-soc.repl
-    machine LoadPlatformDescription @renode/mpfs-ddr-38bit-cached-3gib.repl
-    machine UnregisterFromParent sysbus.i2c0
-    machine LoadPlatformDescription @renode/mpfs-sim-peripherals.repl
-
-    # MPFS_SPI does not implement the SPS/CLKMODE bits or FRAMESUP and warns
-    # on every transfer; harmless (see renode/README.md).
-    logLevel 3 sysbus.spi0
-    logLevel 3 sysbus.spi1
-
-    sysbus LoadELF $elf
-    sysbus.e51 PC 0x08000000
-    sysbus.u54_1 PC 0x08000000
-    sysbus.u54_2 PC 0x08000000
-    sysbus.u54_3 PC 0x08000000
-    sysbus.u54_4 PC 0x08000000
-"""
-
-# Model counters, printed per board at the end. Macros are defined before
-# any machine exists: a macro defined while a machine is selected is only
-# visible from that machine.
-macro counters
-"""
-    echo "  spi0.flash programs, erases, ignored commands:"
-    sysbus.spi0.flash Programs
-    sysbus.spi0.flash Erases
-    sysbus.spi0.flash IgnoredCommands
-    echo "  i2c0 transactions, address NACKs; i2c0.eeprom writes, bytes read:"
-    sysbus.i2c0 Transactions
-    sysbus.i2c0 AddressNacks
-    sysbus.i2c0.eeprom Writes
-    sysbus.i2c0.eeprom BytesRead
-    echo "  spi1.proto requests, NAKs, aborted requests, events queued:"
-    sysbus.spi1.proto Requests
-    sysbus.spi1.proto Naks
-    sysbus.spi1.proto AbortedRequests
-    sysbus.spi1.proto EventsQueued
-"""
-emulation CreateSwitch "sw"
-
-mach create "board0"
-runMacro $board
-sysbus.eth MAC "02:4d:50:46:53:00"
-connector Connect sysbus.eth sw
-sysbus.mmuart1 CreateFileBackend $uart_log true
-
-mach create "board1"
-runMacro $board
-# Strap GPIO2_0 = 1. MPFS_GPIO ignores an input that is not configured as one,
-# so configure it here first (GPIO_CFG[0] = input); the firmware's own
-# configuration later keeps the state.
-sysbus WriteDoubleWord 0x20122000 0x2
-sysbus.gpio2 OnGPIO 0 true
-sysbus.eth MAC "02:4d:50:46:53:01"
-connector Connect sysbus.eth sw
-sysbus.mmuart1 CreateFileBackend $uart_log_b true
-
-# After 1 s (scheduler running), the protocol device on board 0's spi1
-# queues an event: its DataReady line interrupts the app, which fetches it.
-emulation RunFor "1"
-mach set "board0"
-sysbus.spi1.proto InjectEvent 0x42
-echo "run-demo: event 0x42 injected on board0 spi1.proto; running (emulated seconds:)"
-echo $runtime
-emulation RunFor $runtime
-
-echo "run-demo: board0"
-mach set "board0"
-runMacro $counters
-echo "run-demo: board1"
-mach set "board1"
-runMacro $counters
+include @renode/boards.resc
+runMacro $run_and_report
 echo "run-demo: done"
 quit
