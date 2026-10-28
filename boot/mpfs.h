@@ -9,7 +9,8 @@
  *     at its physical addresses (p_paddr, L2LIM from 0x0800_0000) and starts
  *     U54_1 in M-mode at the physical entry _start_pa = 0x0800_0000 (not
  *     e_entry, which is virtual) with a0 = hart id. Clocks, L2 as LIM, and
- *     PMP entry 0 (unlocked) are its job.
+ *     PMP entry 0 (unlocked) are its job, and so is DDR training if the
+ *     application uses DDR.
  *   - The image is linked at the virtual alias of L2LIM in the high half
  *     (VA = PA + MPFS_ONCHIP_VA_OFFSET) and loaded at its physical address.
  *     M-mode runs from the physical copy with the MMU off (-mcmodel=medany
@@ -42,6 +43,10 @@
 /* CLINT. */
 #define CLINT_MTIMECMP_BASE     _UL(0x02004000)     /* + 8 * hart */
 #define CLINT_MTIME             _UL(0x0200BFF8)
+
+/* DDR, 38-bit cached window (physical). Renode's stock platform maps 1 GiB
+ * here; on hardware the bootloader must have trained DDR. */
+#define MPFS_DDR_CACHED_PA      _UL(0x1000000000)
 
 /* CSR bits. */
 #define MSTATUS_SIE             (_UL(1) << 1)

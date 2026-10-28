@@ -2,7 +2,8 @@
 
 > **Branch `bare-bones`: never merged into `main`.** The smallest possible
 > version of the S-mode port: one FreeRTOS task on U54_1 that counts
-> (`g_count`), no UART, no peripherals, no HAL. Everything below this box
+> (`g_count`) and, on each count, writes and reads back a word in DDR through
+> the Sv39 mapping (`g_ddr_ok`, `g_ddr_bad`). No UART, no peripherals, no HAL. Everything below this box
 > describes `main` and is kept for reference only; this box describes what is
 > actually in this branch.
 >
@@ -14,7 +15,8 @@
 >                      the application's table, jump to the high-half alias, stvec,
 >                      s_mode_main), linker.ld (L2LIM: linked at the alias, loaded
 >                      at the physical address)
-> app/                 main.c (the Sv39 root table, s_mode_main, the counting task),
+> app/                 main.c (the Sv39 root table, s_mode_main, the counting task
+>                      with its DDR check),
 >                      FreeRTOSConfig.h
 > renode/hello.resc    run it in Renode as a bootloader would start it
 > Makefile, CMakeLists.txt, cmake/riscv64-unknown-elf.cmake
@@ -36,7 +38,8 @@
 >   the ELF at its physical addresses (`p_paddr`: L2LIM, `0x0800_0000`) and
 >   starts U54_1 in M-mode at the physical entry `_start_pa` = `0x0800_0000`
 >   with `a0` = hart id. Not at `e_entry`: that is the virtual `_start`.
->   Clocks, L2 configured as LIM, and an unlocked PMP entry 0 are its job.
+>   Clocks, L2 configured as LIM, an unlocked PMP entry 0, and DDR training
+>   (when the application uses DDR) are its job.
 >   Other harts that reach `_start` are parked.
 > - **L2LIM in the virtual high half, as on `main`:** the image is linked at
 >   VA `0xFFFFFFC0_0800_0000` (PA + `MPFS_ONCHIP_VA_OFFSET`) and loaded at PA
@@ -54,17 +57,32 @@
 >   without it. It must map L2LIM both 1:1 (the instructions right after the
 >   `satp` write still run at the physical address) and at the alias, plus
 >   the CLINT `mtime` register at its physical address. The hello-world's
->   table: two 1 GiB gigapages onto PA `0x0000_0000`, entry 0 (1:1, which
->   also covers the CLINT) and entry 256 (VA `0xFFFFFFC0_0000_0000`). A table
->   without the alias parks the hart in `s_park` before FreeRTOS starts.
+>   table, three 1 GiB gigapages:
+>   - entry 0: VA `0x0000_0000` → PA `0x0000_0000` (1:1, also covers the
+>     CLINT);
+>   - entry 256: VA `0xFFFFFFC0_0000_0000` → PA `0x0000_0000` (the alias);
+>   - entry 257: VA `0xFFFFFFC0_4000_0000` → PA `0x10_0000_0000`, the
+>     38-bit cached DDR window (data: read/write, not executable).
+>
+>   A table without the alias parks the hart in `s_park` before FreeRTOS
+>   starts; one without the DDR entry stops the task at its first DDR access
+>   (page fault, the port's default exception handler parks the hart).
+> - **DDR:** the counting task stores `count ^ 0xA5A5A5A55A5A5A5A` at
+>   `0xFFFFFFC0_4000_0000 + (count × 1 MiB) mod 1 GiB` (so all 1 GiB within
+>   1024 counts), reads it back, and counts `g_ddr_ok` / `g_ddr_bad`; the
+>   last address is in `g_ddr_last_va`. It reaches DDR through a pointer
+>   constant: no linker symbols, and the ELF still loads only into L2LIM.
 >
 > **Checking it:** in Renode, `renode -e "include @renode/hello.resc"`, then
 > `start`; `sysbus ReadDoubleWord <g_count's address - 0xFFFFFFC0_00000000>`
 > shows the count (symbols are virtual, Renode's bus is physical): 1000
-> after one emulated second, 2000 after two. `sysbus.u54_1 PC` shows the
-> hart in the alias (`0xFFFFFFC0_08…`).
+> after one emulated second, 2000 after two, with `g_ddr_ok` equal to it and
+> `g_ddr_bad` 0. `sysbus.u54_1 PC` shows the hart in the alias
+> (`0xFFFFFFC0_08…`), and `sysbus ReadDoubleWord 0x103E800000` /
+> `0x103E800004` (DDR, physical) show count 1000's word, `0x5A5A59B2` /
+> `0xA5A5A5A5`: renode/hello.resc explains.
 > On hardware, read `g_count` with a debugger. Image size (Debug, GCC 13):
-> 12.3 KB of code, 29 KB of RAM (16 KiB heap, 4 KiB ISR stack, 4 KiB each for
+> 12.5 KB of code, 29 KB of RAM (16 KiB heap, 4 KiB ISR stack, 4 KiB each for
 > the M-mode and S-mode boot stacks).
 
 A U54 RISCV FreeRTOS Port to work in S-Mode

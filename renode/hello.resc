@@ -16,6 +16,15 @@
 #
 # (the low 32 bits). It goes up by one per tick: 1000 per emulated second.
 # 'sysbus.u54_1 PC' shows the hart running from the alias (0xFFFFFFC0_08...).
+#
+# DDR: each count writes count ^ 0xA5A5A5A55A5A5A5A to DDR at VA
+# 0xFFFFFFC0_4000_0000 + (count * 1 MiB) mod 1 GiB, which the application's
+# table maps to PA 0x10_0000_0000 + the same offset (Renode's stock platform
+# has 1 GiB of DDR there). g_ddr_ok counts the words read back intact
+# (= g_count), g_ddr_bad the others. Count 1000's word, for example:
+#
+#   sysbus ReadDoubleWord 0x103E800000      -> 0x5A5A59B2
+#   sysbus ReadDoubleWord 0x103E800004      -> 0xA5A5A5A5
 # A non-zero g_m_fault (M-mode shim: unexpected trap) means the hart parked;
 # a PC at s_park's physical address means S-mode faulted before FreeRTOS
 # started (e.g. a page table without the alias).
