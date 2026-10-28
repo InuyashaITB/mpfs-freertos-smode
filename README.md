@@ -670,6 +670,29 @@ make robot RENODE_TEST=<Renode's renode-test>       # Robot Framework tests
   with Renode's test requirements (`robotframework==4.0.1`, `requests`,
   `psutil`, `pyyaml`).
 
+**The same with CMake / CTest.** No shell or busybox is needed, so this
+works from a plain Windows prompt:
+
+```sh
+cmake -B build-cmake -DRENODE=<Renode executable> [-DPYTHON=<python3>] [-DRENODE_TEST=<renode-test>]
+cmake --build build-cmake
+ctest --test-dir build-cmake --output-on-failure      # or -R sim, -L host, -L robot
+```
+
+| CTest test | Like | Registered when |
+|---|---|---|
+| `check_uart_selftest`, `check_uart_selftest_fail` | — (the checker itself, on fixed logs) | always |
+| `sim` | `make sim` | `RENODE` is set |
+| `sim_host` | `make sim-host` | `RENODE` and `PYTHON` are set (Python 3 is found automatically) |
+| `robot` | `make robot` | `RENODE_TEST` is set |
+
+* **Shared files:** the tests use the same Renode scripts and expected-line
+  files as make. The checks are CMake scripts: `renode/cmake/RunSim.cmake`
+  and `CheckUart.cmake`.
+* **Outputs:** `build-cmake/sim/`, `sim_host/`, `robot/`.
+* **Build targets:** each run is also a target, e.g. `cmake --build
+  build-cmake --target sim`.
+
 ## Limitations / next steps
 
 * **Simulated peripherals on hardware:** the SPI/I2C devices are generic and

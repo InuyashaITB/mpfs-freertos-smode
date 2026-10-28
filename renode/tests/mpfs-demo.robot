@@ -22,6 +22,10 @@ Resource          ${RENODEKEYWORDS}
 *** Variables ***
 ${PROJECT}        ${CURDIR}/../..
 ${BUILD}          ${PROJECT}/build
+# Override with renode-test --variable ELF:<path> (CTest passes CMake's ELF)
+# and --variable OUT:<dir>.
+${ELF}            ${BUILD}/examples/freertos-demo/freertos-demo.elf
+${OUT}            ${BUILD}/sim
 ${TIMEOUT}        60
 
 *** Keywords ***
@@ -30,9 +34,9 @@ Two Boards Setup
     # boards.resc names its files relative to the project root; add it to
     # the monitor's search path (Renode's working directory differs here).
     Execute Command    path add @${PROJECT}
-    Execute Command    $elf=@${BUILD}/examples/freertos-demo/freertos-demo.elf
-    Execute Command    $uart_log=@${BUILD}/sim/robot-uart1.txt
-    Execute Command    $uart_log_b=@${BUILD}/sim/robot-uart1-board1.txt
+    Execute Command    $elf=@${ELF}
+    Execute Command    $uart_log=@${OUT}/robot-uart1.txt
+    Execute Command    $uart_log_b=@${OUT}/robot-uart1-board1.txt
     Execute Command    include @${PROJECT}/renode/boards.resc
     ${t0}=    Create Terminal Tester    sysbus.mmuart1    timeout=${TIMEOUT}    machine=board0
     ${t1}=    Create Terminal Tester    sysbus.mmuart1    timeout=${TIMEOUT}    machine=board1

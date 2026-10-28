@@ -14,7 +14,9 @@
 | `expected-uart-board0.txt` | Lines only board 0 must show (the injected protocol event) |
 | `expected-host-board.txt`, `expected-host.txt` | `make sim-host`: lines both boards must show, and lines the host helper must report |
 | `check-uart.sh` | Checks a UART log against expected-line files (POSIX sh / busybox sh) |
-| `tests/mpfs-demo.robot` | Robot Framework tests (`make robot`) |
+| `tests/mpfs-demo.robot` | Robot Framework tests (`make robot`, CTest `robot`) |
+| `cmake/RunSim.cmake`, `cmake/CheckUart.cmake` | The CTest drivers: one Renode run plus checks, and the CMake twin of `check-uart.sh` (no shell needed) |
+| `tests/data/` | Fixed UART logs for CTest's `check_uart_selftest` tests |
 
 Models are written against the **Renode 1.13** API (SoftConsole v2022.2):
 `Machine`, not the newer `IMachine`. Renode compiles a model when it is
@@ -124,6 +126,41 @@ administrator rights**:
   in `host-bridge.repl` and the helper's `--listen-port` / `--send-port`.
 * The helper is a minimal stack: ARP, ICMP echo and UDP echo, no TCP. Host
   programs cannot open sockets to the boards through it.
+
+## CMake / CTest
+
+The root `CMakeLists.txt` registers the same runs as CTest tests: `sim`,
+`sim_host`, `robot`, plus the checker's own tests. Each is also a build
+target. They need no shell: `cmake/RunSim.cmake` and
+`cmake/CheckUart.cmake` replace the Makefile's `sh` parts.
+
+```
+cmake -B build-cmake -DRENODE=C:/.../Renode.exe [-DPYTHON=py] [-DRENODE_TEST=C:/.../renode-test]
+cmake --build build-cmake
+ctest --test-dir build-cmake --output-on-failure
+```
+
+How the CMake runs differ from make's, and why:
+
+* **Start-up:** the start variables (UART paths, `$runtime`, CMake's
+  `$elf`) go into a generated `<out>/sim.resc`, because one `-e` argument
+  with `;` would be split by CMake.
+* **The host helper:** for `sim_host`, `host_bridge.py` runs in the same
+  `execute_process()` as Renode, started together.
+  * It goes first, with `--quiet`: CMake pipes its output into Renode's
+    console input.
+  * It stops by itself with `--exit-idle 20` (20 s without frames, after
+    traffic has started), so nothing needs to be killed. `--duration 600`
+    is the upper bound.
+* **Expected-line files** are passed separated by `|`; `;` would split the
+  argument again.
+* **`RESOURCE_LOCK renode`:** the Renode tests never run in parallel
+  (`ctest -j`), because of the bridge's fixed UDP ports and the CPU load.
+* **The `robot` test** passes CMake's ELF and output directory as Robot
+  variables (`--variable ELF:... --variable OUT:...`). Python with
+  robotframework must be first on PATH when `ctest` runs.
+
+Tested on Linux with Renode 1.13.1: all 5 tests pass in about 2.5 minutes.
 
 ## Robot Framework tests: `make robot`
 

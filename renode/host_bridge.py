@@ -17,7 +17,8 @@
 #     reports the first reply from each.
 # Every event is printed, and with --report also appended to FILE (the
 # 'make sim-host' check reads it). Stops after --duration seconds (default:
-# never) or on Ctrl+C.
+# never), after --exit-idle seconds without a frame once frames have flowed
+# (CTest runs it next to Renode and relies on this), or on Ctrl+C.
 
 import argparse
 import socket
@@ -56,6 +57,7 @@ class Host:
         self.sock.bind(("127.0.0.1", args.listen_port))
         self.sock.settimeout(0.2)
         self.report = open(args.report, "a") if args.report else None
+        self.quiet = args.quiet
         self.arp = {}                       # ip bytes -> mac bytes
         self.targets = [socket.inet_aton(t) for t in args.ping]
         self.answered = set()               # targets that replied to our ping
@@ -63,7 +65,8 @@ class Host:
 
     def log(self, text):
         line = "host: " + text
-        print(line, flush=True)
+        if not self.quiet:
+            print(line, flush=True)
         if self.report:
             self.report.write(line + "\n")
             self.report.flush()
@@ -144,13 +147,17 @@ class Host:
             icmp = icmp[:2] + struct.pack("!H", checksum(icmp)) + icmp[4:]
             self.send(self.arp[target], ETH_IP, self.ip_packet(1, target, icmp))
 
-    def run(self, duration):
+    def run(self, duration, exit_idle):
         end = time.monotonic() + duration if duration > 0 else None
+        last_frame = None
         next_ping = 0.0
         self.log("listening on 127.0.0.1:%d as %s (%s)"
                  % (self.sock.getsockname()[1], socket.inet_ntoa(self.ip), fmt_mac(self.mac)))
         while end is None or time.monotonic() < end:
             now = time.monotonic()
+            if exit_idle > 0 and last_frame is not None and now - last_frame > exit_idle:
+                self.log("no frames for %g s: stopping" % exit_idle)
+                break
             if self.targets and now >= next_ping:
                 self.ping_targets()
                 next_ping = now + 1.0
@@ -160,6 +167,7 @@ class Host:
                 continue
             except ConnectionResetError:
                 continue                          # Windows: nobody listening yet
+            last_frame = time.monotonic()
             if len(frame) < 14:
                 continue
             dst, src = frame[:6], frame[6:12]
@@ -184,10 +192,15 @@ def main():
     parser.add_argument("--ping", action="append", default=[], metavar="IP",
                         help="ping this board until it answers (repeatable)")
     parser.add_argument("--duration", type=float, default=0, help="seconds, 0 = run forever")
+    parser.add_argument("--exit-idle", type=float, default=0, metavar="S",
+                        help="once frames have arrived, stop after S seconds without one "
+                             "(0 = never)")
     parser.add_argument("--report", help="append every event to this file")
+    parser.add_argument("--quiet", action="store_true",
+                        help="print nothing (with --report: events go only to the file)")
     args = parser.parse_args()
     try:
-        Host(args).run(args.duration)
+        Host(args).run(args.duration, args.exit_idle)
     except KeyboardInterrupt:
         pass
     return 0

@@ -712,3 +712,20 @@ Both boards print `[S] NET: ping host 192.168.10.1: PASS`.
 - **Left as is:** the Windows `make sim` set-up (PATH with SoftConsole's
   `build_tools\bin`, `RENODE` = the executable) is documented but not
   automated. A two-board SoftConsole launcher was discussed, but not added.
+
+## CMake / CTest
+
+The Renode runs are also CTest tests in the root `CMakeLists.txt`: `sim`,
+`sim_host`, `robot`, and `check_uart_selftest(_fail)`. Each is also a build
+target.
+- **No shell needed:** `renode/cmake/RunSim.cmake` (one run plus checks) and
+  `renode/cmake/CheckUart.cmake` (the twin of `check-uart.sh`) replace the
+  Makefile's `sh` parts.
+- **`host_bridge.py`** gained `--exit-idle` and `--quiet`, so CMake can run
+  it next to Renode without job control.
+- **Verified on Linux with Renode 1.13.1:**
+  - all 5 tests pass, in about 2.5 minutes;
+  - a 1 ms run fails;
+  - without `RENODE` only the checker tests are registered;
+  - `make sim` / `make sim-host` are unchanged and still pass.
+- Details are in `renode/README.md` ("CMake / CTest").
