@@ -26,7 +26,7 @@ APP            := freertos-demo
 
 include $(MPFS_SMODE_DIR)/mpfs_smode.mk
 
-SRCS := app_main.c m_prehook.c other_harts.c ddr_buffers.c periph_selftest.c spi_xfer.c spi_flash.c proto_dev.c i2c_eeprom.c
+SRCS := app_main.c m_prehook.c other_harts.c ddr_buffers.c periph_selftest.c spi_xfer.c spi_flash.c proto_dev.c i2c_eeprom.c liteeth.c
 
 # Implicit linker scripts added to the library's mpfs-lim-sv39.ld: the demo's
 # layout of the DDR window (g_ddr_buffer_0..2).

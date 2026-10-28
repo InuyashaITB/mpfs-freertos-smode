@@ -1,15 +1,17 @@
-# Lines 'make sim' requires in the MMUART1 output (renode/check-uart.sh).
+# Lines 'make sim' requires in the MMUART1 output of both boards
+# (renode/check-uart.sh); board 0 also needs expected-uart-board0.txt.
 # One fixed string per line, matched anywhere in a line; '#' starts a comment
 # line. Each phase adds its self-test's PASS line here.
 
-# Phase 4: SPI1 protocol device (replaced the Phase 1 loopback); the event
-# is injected by run-demo.resc after 1 s
+# Phase 4: SPI1 protocol device (replaced the Phase 1 loopback). The event
+# line is in expected-uart-board0.txt.
 SPI1 proto (S-mode, ProtoSpiDevice): PASS
-SPI1 proto: data-ready interrupt, events: 42
 # Phase 2: SPI0 NOR flash
 SPI0 flash (S-mode, NorFlash model): PASS
 # Phase 3: I2C0 EEPROM (runs in the console task, after the scheduler starts)
 I2C0 EEPROM (S-mode, MSS_I2C driver, interrupts): PASS
+# Phase 5a: raw Ethernet frames with the other board (LiteEth, two boards)
+ETH: raw frames with board 
 # The scheduler runs and the second status line appears (tick 2000 or a
 # little later; the default run is 1 + 3 s)
 scheduler running

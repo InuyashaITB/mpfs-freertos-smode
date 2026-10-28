@@ -4,11 +4,13 @@
  * Sv39 page tables for the S-mode kernel: gigapage (1 GiB) mappings only.
  *
  * LIBRARY-FIXED: the mapping policy below (one root table, gigapages, the
- * permissions, A/D and G preset, ASID 0) is built into sv39.c. Only the
- * addresses come from the linker script the application links with.
+ * permissions, A/D and G preset, ASID 0) is built into sv39.c. The on-chip
+ * and DDR addresses come from the linker script the application links with;
+ * the two identity windows (gigapages 0 and 1) are fixed.
  *
  * Mappings (built from the linker script, see mpfs-lim-sv39.ld):
  *   identity   VA 0x0         -> PA 0x0             1 GiB  RWX  peripherals, switch-over
+ *   fabric     VA 0x40000000  -> PA 0x40000000      1 GiB  RW   FIC3 + FIC0 windows (soft IP)
  *   on-chip    l2lim_va & ~1G -> l2lim_pa & ~1G     1 GiB  RWX  code/data (high alias)
  *   DDR        ddr_va         -> ddr_pa             N GiB  RW
  */
@@ -19,6 +21,10 @@
 #include <stdint.h>
 
 #define SV39_GIGAPAGE           (1UL << 30)
+
+/* Physical gigapage 1, identity mapped: fabric interfaces FIC3 (0x4000_0000)
+ * and FIC0 (0x6000_0000). A fixed hardware window, like gigapage 0. */
+#define SV39_FABRIC_PA          (0x40000000UL)
 #define SV39_SATP_MODE          (8UL << 60)
 
 /* PTE bits */

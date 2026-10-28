@@ -9,9 +9,11 @@
 
 #include "mpfs_hal/mss_hal.h"
 #include "drivers/mss/mss_spi/mss_spi.h"
+#include "drivers/mss/mss_gpio/mss_gpio.h"
 #include "spi_flash.h"
 #include "proto_dev.h"
 #include "i2c_eeprom.h"
+#include "liteeth.h"
 #include "periph_selftest.h"
 
 /*------------------------------------------------------------------------------
@@ -406,4 +408,180 @@ uint32_t i2c_eeprom_selftest(selftest_print_t print)
     }
 
     return failed;
+}
+
+/*------------------------------------------------------------------------------
+ * Phase 5a: raw Ethernet frames between two boards
+ */
+#define ETH_TYPE_HI         (0x88U)     /* 0x88B5: IEEE local experimental */
+#define ETH_TYPE_LO         (0xB5U)
+#define ETH_MSG_HELLO       (1U)
+#define ETH_MSG_ACK         (2U)
+#define ETH_PATTERN_OFF     (22U)
+#define ETH_PATTERN_LEN     (32U)
+#define ETH_FRAME_LEN       (ETH_PATTERN_OFF + ETH_PATTERN_LEN)
+#define ETH_HELLO_PERIOD_MS (100U)
+#define ETH_STRAP_GPIO_MASK (1UL << 0)  /* GPIO2_0 */
+
+static const uint8_t s_eth_magic[4] = { 'M', 'P', 'F', 'S' };
+
+typedef struct
+{
+    uint8_t mac[6];
+    uint8_t id;
+    uint8_t peer;
+    uint16_t seq;
+    uint32_t start_ms;
+    uint32_t last_hello_ms;
+    uint8_t got_hello;
+    uint8_t got_ack;
+    uint8_t passed;             /* PASS printed */
+    uint8_t no_peer;            /* "no peer" printed */
+    uint8_t failed;             /* FAIL printed */
+} eth_test_t;
+
+static eth_test_t s_eth;
+static uint8_t s_eth_rx[LITEETH_SLOT_SIZE];
+
+static uint8_t eth_pattern(uint32_t i) { return (uint8_t)((i * 37U) + 0x11U); }
+
+static void eth_send(uint8_t type, const uint8_t dst[6])
+{
+    uint8_t f[ETH_FRAME_LEN];
+
+    for (uint32_t i = 0U; i < 6U; i++)
+    {
+        f[i] = dst[i];
+        f[6U + i] = s_eth.mac[i];
+    }
+    f[12] = ETH_TYPE_HI;
+    f[13] = ETH_TYPE_LO;
+    (void)memcpy(&f[14], s_eth_magic, sizeof(s_eth_magic));
+    f[18] = type;
+    f[19] = s_eth.id;
+    f[20] = (uint8_t)(s_eth.seq >> 8);
+    f[21] = (uint8_t)s_eth.seq;
+    for (uint32_t i = 0U; i < ETH_PATTERN_LEN; i++)
+    {
+        f[ETH_PATTERN_OFF + i] = eth_pattern(i);
+    }
+    s_eth.seq++;
+    (void)liteeth_send(f, ETH_FRAME_LEN);
+}
+
+static void eth_fail(selftest_print_t print, const char *why)
+{
+    if (0U == s_eth.failed)
+    {
+        print("[S] ETH: raw frames FAIL (%s)\r\n", why);
+        s_eth.failed = 1U;
+    }
+}
+
+/* One received frame: ours (EtherType) or ignored. */
+static void eth_handle(selftest_print_t print, const uint8_t *f, uint32_t len)
+{
+    static const uint8_t bcast[6] = { 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU };
+
+    if ((len < ETH_FRAME_LEN) || (ETH_TYPE_HI != f[12]) || (ETH_TYPE_LO != f[13]))
+    {
+        return;     /* not ours */
+    }
+    if (0 != memcmp(&f[14], s_eth_magic, sizeof(s_eth_magic)))
+    {
+        eth_fail(print, "bad magic");
+        return;
+    }
+    for (uint32_t i = 0U; i < ETH_PATTERN_LEN; i++)
+    {
+        if (eth_pattern(i) != f[ETH_PATTERN_OFF + i])
+        {
+            eth_fail(print, "payload corrupted");
+            return;
+        }
+    }
+    if (f[19] == s_eth.id)
+    {
+        eth_fail(print, "peer has our board id: is the GPIO2_0 strap set on one board?");
+        return;
+    }
+
+    s_eth.peer = f[19];
+    if (ETH_MSG_HELLO == f[18])
+    {
+        s_eth.got_hello = 1U;
+        eth_send(ETH_MSG_ACK, &f[6]);           /* unicast back to the sender */
+    }
+    else if (ETH_MSG_ACK == f[18])
+    {
+        if ((0 != memcmp(f, s_eth.mac, 6U)) && (0 != memcmp(f, bcast, 6U)))
+        {
+            eth_fail(print, "ACK not addressed to us");
+            return;
+        }
+        s_eth.got_ack = 1U;
+    }
+    else
+    {
+        eth_fail(print, "unknown message type");
+    }
+}
+
+void eth_raw_test_start(selftest_print_t print, uint32_t now_ms)
+{
+    static const uint8_t mac_prefix[5] = { 0x02U, 0x4DU, 0x50U, 0x46U, 0x53U };
+
+    (void)memset(&s_eth, 0, sizeof(s_eth));
+    s_eth.id = (0U != (MSS_GPIO_get_inputs(GPIO2_LO) & ETH_STRAP_GPIO_MASK)) ? 1U : 0U;
+    (void)memcpy(s_eth.mac, mac_prefix, sizeof(mac_prefix));
+    s_eth.mac[5] = s_eth.id;
+    s_eth.start_ms = now_ms;
+    s_eth.last_hello_ms = now_ms - ETH_HELLO_PERIOD_MS;
+
+    liteeth_init();
+    print("[S] ETH: board %u, MAC %02x:%02x:%02x:%02x:%02x:%02x, LiteEth at 0x%lx\r\n",
+          (unsigned)s_eth.id, s_eth.mac[0], s_eth.mac[1], s_eth.mac[2], s_eth.mac[3],
+          s_eth.mac[4], s_eth.mac[5], (unsigned long)LITEETH_CSR_BASE);
+}
+
+void eth_raw_test_poll(selftest_print_t print, uint32_t now_ms)
+{
+    static const uint8_t bcast[6] = { 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU };
+    uint32_t len = 0U;
+    liteeth_status_t st;
+
+    while (LITEETH_NONE != (st = liteeth_receive(s_eth_rx, sizeof(s_eth_rx), &len)))
+    {
+        if (LITEETH_OK == st)
+        {
+            eth_handle(print, s_eth_rx, len);
+        }
+    }
+
+    if ((0U != s_eth.got_hello) && (0U != s_eth.got_ack))
+    {
+        if (0U == s_eth.passed)
+        {
+            liteeth_stats_t stats;
+
+            liteeth_get_stats(&stats);
+            print("[S] ETH: raw frames with board %u: PASS (tx %lu, rx %lu)\r\n",
+                  (unsigned)s_eth.peer, (unsigned long)stats.tx, (unsigned long)stats.rx);
+            s_eth.passed = 1U;
+        }
+        return;     /* done: only answer the peer's HELLOs from now on */
+    }
+
+    if ((now_ms - s_eth.last_hello_ms) >= ETH_HELLO_PERIOD_MS)
+    {
+        s_eth.last_hello_ms = now_ms;
+        eth_send(ETH_MSG_HELLO, bcast);
+    }
+
+    if ((0U == s_eth.no_peer) && ((now_ms - s_eth.start_ms) >= ETH_PEER_TIMEOUT_MS))
+    {
+        print("[S] ETH: no peer answered within %u ms (single board?)\r\n",
+              (unsigned)ETH_PEER_TIMEOUT_MS);
+        s_eth.no_peer = 1U;     /* keep sending HELLOs: a peer may still come */
+    }
 }

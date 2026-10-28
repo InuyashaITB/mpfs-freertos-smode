@@ -11,6 +11,7 @@
  * Renode's polarfire-soc-icicle-board.resc):
  *   GPIO2_26 -> GPIO2_30 (PLIC 43), GPIO2_27 -> GPIO2_31 (PLIC 44),
  *   GPIO2_28 -> F2M_0 (PLIC 118). LEDs on GPIO2_16..19.
+ * GPIO2_0 is an input: the board-id strap (0 or 1) for two-board runs.
  * The PLIC sources are enabled for the S context in s_mode_main().
  *
  * Runs in M-mode from the physical copy of L2LIM (MMU off).
@@ -47,6 +48,8 @@ void smode_m_prehook(void)
     (void)mss_config_clk_rst(MSS_PERIPH_SPI1, (uint8_t) MPFS_HAL_FIRST_HART, PERIPHERAL_ON);
     (void)mss_config_clk_rst(MSS_PERIPH_I2C0, (uint8_t) MPFS_HAL_FIRST_HART, PERIPHERAL_ON);
     (void)mss_config_clk_rst(MSS_PERIPH_I2C1, (uint8_t) MPFS_HAL_FIRST_HART, PERIPHERAL_ON);
+    /* Fabric interface 3: the soft Ethernet MAC (LiteEth) at 0x4000_0000. */
+    (void)mss_config_clk_rst(MSS_PERIPH_FIC3, (uint8_t) MPFS_HAL_FIRST_HART, PERIPHERAL_ON);
 
     MSS_UART_init( &g_mss_uart1_lo,
             MSS_UART_115200_BAUD,
@@ -68,6 +71,9 @@ void smode_m_prehook(void)
     MSS_GPIO_config(GPIO2_LO, MSS_GPIO_26, MSS_GPIO_OUTPUT_MODE);
     MSS_GPIO_config(GPIO2_LO, MSS_GPIO_27, MSS_GPIO_OUTPUT_MODE);
     MSS_GPIO_config(GPIO2_LO, MSS_GPIO_28, MSS_GPIO_OUTPUT_MODE);
+
+    /* Board-id strap (two-board Renode runs set it on board 1). */
+    MSS_GPIO_config(GPIO2_LO, MSS_GPIO_0, MSS_GPIO_INPUT_MODE);
 
     MSS_GPIO_config(GPIO2_LO, MSS_GPIO_30, MSS_GPIO_INPUT_MODE | MSS_GPIO_IRQ_LEVEL_HIGH);
     MSS_GPIO_config(GPIO2_LO, MSS_GPIO_31, MSS_GPIO_INPUT_MODE | MSS_GPIO_IRQ_LEVEL_HIGH);

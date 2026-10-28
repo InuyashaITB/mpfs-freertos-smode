@@ -113,7 +113,7 @@ make                        # library, then the demo
 make libs                   # library + install tree only (= make -C src FREERTOS_CONFIG_DIR=../examples/freertos-demo)
 make install PREFIX=dist    # copy the install tree to dist/ (any path, e.g. C:/mpfs-smode)
 make clean                  # remove build/
-make sim RENODE=<Renode>    # build, run the demo headless in Renode, check UART1 (renode/README.md)
+make sim RENODE=<Renode>    # build, run the demo on two boards headless in Renode, check UART1 (renode/README.md)
 ```
 
 Each also works on its own:
@@ -251,7 +251,7 @@ the library.
 | Board configuration: `fpga_design_config/`, `mss_sw_config.h` | `MPFS_BOARD_DIR` | **LIBRARY-FIXED** |
 | S-mode hart = U54_1 (`SMODE_HART`) | `smode/smode_plic.h` | **LIBRARY-FIXED** (any other value is a compile error) |
 | M-mode shim: trap delegation, PMP entry 0, SBI calls, 4 KiB M-mode and S boot stacks | `smode/m_shim.h`, `smode/sbi.h` | **LIBRARY-FIXED** |
-| Sv39 mapping policy (gigapages, permissions) | `smode/sv39.h` | **LIBRARY-FIXED** (addresses come from the linker script) |
+| Sv39 mapping policy (gigapages, permissions) | `smode/sv39.h` | **LIBRARY-FIXED** (on-chip and DDR addresses come from the linker script; the identity windows for gigapages 0 and 1 are fixed) |
 | MSS drivers in `libmpfs_drivers.a` | `MPFS_DRIVERS` | **LIBRARY-FIXED** (an app can still compile other drivers itself) |
 | `s_mode_main()`, `smode_m_prehook()`, `smode_diag_puts()`, FreeRTOS hooks | `smode/mpfs_smode.h` | application |
 | PLIC sources (`SPLIC_enable()`), PLIC handlers, `e51()`/`u54_2..4()` (standalone) | application code | application |
@@ -420,6 +420,7 @@ with `SMODE_HART` (checked at build time).
 | `examples/freertos-demo/ddr_buffers.*` | *(mmu-sv39)* 3 x 1 GiB buffers: linker symbols (`ddr_buffers.ld`) + `g_ddr_buffer[]` pointer table |
 | `examples/freertos-demo/periph_selftest.*` | Peripheral self-tests: SPI1 protocol device and SPI0 NOR flash before the scheduler, I2C0 EEPROM in the console task |
 | `examples/freertos-demo/spi_xfer.*` | Bounded SPI master transfer (one chip-select window), shared by the SPI drivers |
+| `examples/freertos-demo/liteeth.*` | Minimal driver for the LiteEth soft MAC on FIC3 (slot buffers, no DMA) |
 | `examples/freertos-demo/proto_dev.*` | Driver for the example-protocol SPI device (framing, CRC-8, response polling) |
 | `examples/freertos-demo/spi_flash.*` | Minimal SPI NOR flash driver on `MSS_SPI` (bounded, one transfer per command) |
 | `examples/freertos-demo/i2c_eeprom.*` | Minimal I2C EEPROM driver on `MSS_I2C` (interrupt-driven, page split, ACK polling) |
@@ -623,10 +624,11 @@ never land inside it. That is the only time `spin` can block.
 | Virtual (S-mode) | Physical | Size | Perms | Purpose |
 |---|---|---|---|---|
 | `0x00000000_00000000` | `0x00_0000_0000` | 1 GiB | RWX | identity: peripherals (drivers use physical addresses), MMU switch-over |
+| `0x00000000_40000000` | `0x00_4000_0000` | 1 GiB | RW | identity: fabric windows FIC3 (`0x4000_0000`) and FIC0 (`0x6000_0000`), soft IP registers |
 | `0xFFFFFFC0_00000000` | `0x00_0000_0000` | 1 GiB | RWX | on-chip alias; code/data run at `0xFFFFFFC0_08000000` (L2LIM) |
 | `0xFFFFFFC0_40000000` | `0x10_0000_0000` | 3 GiB | RW | 38-bit cached DDR, 3 gigapages |
 
-Five gigapage PTEs in one root table (`g_sv39_root`), all with A/D preset
+Six gigapage PTEs in one root table (`g_sv39_root`), all with A/D preset
 and G set. `ORIGIN(ddr_cached_38bit_va) - ORIGIN(l2lim_va)` = 896 MiB.
 
 ### Linker script

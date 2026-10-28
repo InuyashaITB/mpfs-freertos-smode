@@ -315,15 +315,18 @@ flowchart LR
     subgraph VA ["Virtual (S-mode, satp = Sv39)"]
         direction TB
         V0["0x00000000_00000000 + 1 GiB<br/>root[0]"]
+        VF["0x00000000_40000000 + 1 GiB<br/>root[1]"]
         V1["0xFFFFFFC0_00000000 + 1 GiB<br/>root[256]<br/>code / data at 0xFFFFFFC0_08000000"]
         V2["0xFFFFFFC0_40000000 + 3 GiB<br/>root[257..259]<br/>DDR window (demo: g_ddr_buffer_0..2)"]
     end
     subgraph PA ["Physical"]
         direction TB
         P0["0x00_00000000 + 1 GiB<br/>on-chip gigapage 0:<br/>CLINT, PLIC, MMUART, GPIO,<br/>L2LIM 0x08000000"]
+        PF["0x00_40000000 + 1 GiB<br/>fabric: FIC3, FIC0"]
         P2["0x10_00000000 + 3 GiB<br/>38-bit cached DDR"]
     end
     V0 -->|"identity, RWX"| P0
+    VF -->|"identity, RW"| PF
     V1 -->|"high alias, RWX<br/>VA - PA = 0xFFFFFFC0_00000000"| P0
     V2 -->|"RW, no X"| P2
 ```
@@ -331,6 +334,7 @@ flowchart LR
 | Root index | VA | PA | Perms | Why |
 |---|---|---|---|---|
 | 0 | `0x0` | `0x0` | RWX | identity map: the HAL drivers use physical peripheral addresses, and the instructions right after the `satp` write still execute from the physical copy |
+| 1 | `0x40000000` | `0x40000000` | RW | identity map of the fabric windows FIC3 (`0x4000_0000`) and FIC0 (`0x6000_0000`): registers of soft IP in the FPGA, e.g. the LiteEth MAC of the Renode demo. Data only |
 | 256 | `0xFFFFFFC0_00000000` | `0x0` | RWX | high alias of on-chip gigapage 0: where the kernel's code and data run |
 | 257–259 | `0xFFFFFFC0_40000000` | `0x10_00000000` | RW | 3 GiB DDR window, data only; the demo splits it into `g_ddr_buffer_0..2` (`examples/freertos-demo/ddr_buffers.ld`) |
 

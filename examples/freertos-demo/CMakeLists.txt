@@ -33,7 +33,8 @@ add_executable(freertos-demo
     spi_xfer.c
     spi_flash.c
     proto_dev.c
-    i2c_eeprom.c)
+    i2c_eeprom.c
+    liteeth.c)
 
 set_target_properties(freertos-demo PROPERTIES SUFFIX ".elf")
 target_compile_options(freertos-demo PRIVATE -Wall -Wextra)

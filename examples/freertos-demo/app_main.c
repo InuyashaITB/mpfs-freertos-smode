@@ -35,7 +35,8 @@
  * (periph_selftest.c; polled, bounded): the SPI1 protocol device and the SPI0 NOR
  * flash (spi_flash.c), against the Renode models in renode/models. The I2C
  * EEPROM test needs interrupts, so the console task runs it when it starts
- * (no extra task: the heap has little room left).
+ * (no extra task: the heap has little room left). The console task also runs
+ * the raw Ethernet exchange with a peer board (LiteEth, liteeth.c).
  *
  * By the time s_mode_main() runs, the library's smode_start has turned the
  * Sv39 MMU on and this code executes at its virtual (high) addresses.
@@ -74,6 +75,7 @@ typedef enum
     EVT_GPIO2_31 = 2,
     EVT_F2M_0    = 3,
     EVT_PROTO    = 4,   /* SPI1 protocol device: data-ready (F2M_1) */
+    EVT_ETH      = 5,   /* LiteEth: frame received (F2M_2) */
 } app_event_t;
 
 #define HEARTBEAT_PERIOD_MS     (5000U)
@@ -203,6 +205,15 @@ uint8_t fabric_f2h_1_plic_IRQHandler(void)
     return EXT_IRQ_DISABLE;
 }
 
+/* LiteEth soft MAC: a received frame is pending (level, until the slot is
+ * handed back). Same pattern as the protocol device: disable here, the
+ * console task drains the RX slots and re-enables the source. */
+uint8_t fabric_f2h_2_plic_IRQHandler(void)
+{
+    prvPostEvent(EVT_ETH);
+    return EXT_IRQ_DISABLE;
+}
+
 uint8_t fabric_f2h_0_plic_IRQHandler(void)
 {
     MSS_GPIO_set_output(GPIO2_LO, MSS_GPIO_28, 0U);
@@ -213,6 +224,11 @@ uint8_t fabric_f2h_0_plic_IRQHandler(void)
 /*------------------------------------------------------------------------------
  * Tasks
  */
+static uint32_t prvNowMs(void)
+{
+    return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+}
+
 static void vConsoleTask(void *pvParameters)
 {
     (void)pvParameters;
@@ -231,6 +247,10 @@ static void vConsoleTask(void *pvParameters)
         prvPrintf("[S] I2C0 EEPROM (S-mode, MSS_I2C driver, interrupts): %s\r\n",
                   (0U == failed) ? "PASS" : "FAIL");
     }
+
+    /* Raw Ethernet frames with a peer board: polled from the loop below. */
+    eth_raw_test_start(prvPrintf, prvNowMs());
+    BaseType_t xEthIrq = pdFALSE;
 
     for (;;)
     {
@@ -267,12 +287,23 @@ static void vConsoleTask(void *pvParameters)
             prvConsoleUnlock(xLocked);
             SPLIC_enable(FABRIC_F2H_1_PLIC);
         }
+        else if ((pdPASS == xQueued) && (EVT_ETH == ucEvt))
+        {
+            xEthIrq = pdTRUE;   /* the frames are drained by the poll below */
+        }
         else if (pdPASS == xQueued)
         {
             static const char * const names[] = { "?", "GPIO2_30", "GPIO2_31", "F2M_0" };
             prvPrintf("[S] PLIC S-context interrupt: %s (tick %lu)\r\n",
                       names[(ucEvt <= 3U) ? ucEvt : 0U],
                       (unsigned long)xTaskGetTickCount());
+        }
+
+        eth_raw_test_poll(prvPrintf, prvNowMs());
+        if (pdFALSE != xEthIrq)
+        {
+            xEthIrq = pdFALSE;
+            SPLIC_enable(FABRIC_F2H_2_PLIC);
         }
 
         size_t n = MSS_UART_get_rx(&g_mss_uart1_lo, rx, sizeof(rx));
@@ -716,6 +747,7 @@ static const PLIC_IRQn_Type g_smode_irqs[] =
     GPIO1_BIT17_or_GPIO2_BIT31_PLIC_31,
     FABRIC_F2H_0_PLIC,
     FABRIC_F2H_1_PLIC,
+    FABRIC_F2H_2_PLIC,
 };
 
 void s_mode_main(void)
@@ -739,6 +771,8 @@ void s_mode_main(void)
                   (unsigned long)prvReadSatp(), (unsigned long)(uintptr_t)&s_mode_main);
         prvPrintf("[S]   L2LIM VA 0x%lx -> PA 0x%lx\r\n",
                   (unsigned long)l.l2lim_va, (unsigned long)l.l2lim_pa);
+        prvPrintf("[S]   fabric VA 0x%lx -> PA 0x%lx (FIC3/FIC0, 1 GiB identity)\r\n",
+                  (unsigned long)SV39_FABRIC_PA, (unsigned long)SV39_FABRIC_PA);
         for (uint32_t b = 0U; b < DDR_BUFFER_COUNT; b++)
         {
             uintptr_t va = (uintptr_t)g_ddr_buffer[b];

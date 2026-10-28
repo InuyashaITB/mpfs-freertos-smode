@@ -44,4 +44,16 @@ uint32_t spi_flash_selftest(selftest_print_t print);
 #define EEPROM_ABSENT_ADDR      (0x51U)
 uint32_t i2c_eeprom_selftest(selftest_print_t print);
 
+/* Phase 5a: raw Ethernet frames between two boards through the LiteEth soft
+ * MAC (liteeth.c). Symmetric: every board broadcasts HELLO frames
+ * (EtherType 0x88B5) and answers each HELLO from a peer with a unicast ACK.
+ * The board id comes from the GPIO2_0 strap, the MAC is 02:4d:50:46:53:<id>.
+ * Non-blocking: start it once, then call poll often (and when the MAC's
+ * interrupt fires) with the current time in ms. Prints PASS once a HELLO and
+ * an ACK came from a peer, "no peer answered" after ETH_PEER_TIMEOUT_MS
+ * (a single board), FAIL on a malformed frame or a peer with our id. */
+#define ETH_PEER_TIMEOUT_MS     (3000U)
+void eth_raw_test_start(selftest_print_t print, uint32_t now_ms);
+void eth_raw_test_poll(selftest_print_t print, uint32_t now_ms);
+
 #endif /* PERIPH_SELFTEST_H_ */

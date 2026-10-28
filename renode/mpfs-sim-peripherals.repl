@@ -23,3 +23,16 @@ i2c0: I2C.MpfsI2c @ sysbus 0x2010A000
 
 // AT24C256-like EEPROM, 32 KiB, 64-byte pages, at 0x50.
 eeprom: I2C.I2cEeprom @ i2c0 0x50
+
+// Phase 5a: LiteEth soft MAC in the fabric, behind FIC3 (Renode's built-in
+// LiteX_Ethernet). CSRs, slot buffers, MDIO; IRQ -> F2M_2, PLIC 120.
+// Its MAC must match the firmware's (02:4d:50:46:53:<board id>): the switch
+// delivers unicast frames only to the interface whose MAC matches. A repl
+// cannot set a MACAddress in 1.13, so the launcher and run-demo.resc do it:
+//   sysbus.eth MAC "02:4d:50:46:53:00"
+eth: Network.LiteX_Ethernet @ {
+        sysbus 0x40000000;
+        sysbus new Bus.BusMultiRegistration { address: 0x40010000; size: 0x2000; region: "buffer" };
+        sysbus new Bus.BusMultiRegistration { address: 0x40001000; size: 0x100; region: "phy" }
+    }
+    IRQ -> plic@120

@@ -77,6 +77,12 @@ sv39_enable_t sv39_build(void)
     g_sv39_root[sv39_vpn2(0U)] =
         sv39_gigapage(0U, SV39_PTE_R | SV39_PTE_W | SV39_PTE_X);
 
+    /* Identity map of physical gigapage 1: the fabric interface windows FIC3
+     * (0x4000_0000) and FIC0 (0x6000_0000), where soft IP in the FPGA has its
+     * registers. Data only. */
+    g_sv39_root[sv39_vpn2(SV39_FABRIC_PA)] =
+        sv39_gigapage(SV39_FABRIC_PA, SV39_PTE_R | SV39_PTE_W);
+
     /* High alias of the on-chip gigapage: code and data run here. */
     g_sv39_root[sv39_vpn2(onchip_va_base)] =
         sv39_gigapage(onchip_pa_base, SV39_PTE_R | SV39_PTE_W | SV39_PTE_X);

@@ -1,0 +1,5 @@
+# Lines 'make sim' requires only in board 0's MMUART1 output, in addition to
+# expected-uart.txt (renode/check-uart.sh).
+
+# Phase 4: run-demo.resc injects event 0x42 on board 0's spi1.proto after 1 s
+SPI1 proto: data-ready interrupt, events: 42

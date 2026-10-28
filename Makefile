@@ -48,13 +48,16 @@ install: libs
 clean:
 	rm -rf build
 
-# Headless Renode run (renode/run-demo.resc) + check of the UART1 output.
+# Headless Renode run of two boards on one Ethernet switch
+# (renode/run-demo.resc) + check of each board's UART1 output.
 #   RENODE        Renode executable (required), e.g.
 #                 C:/Microchip/SoftConsole-v2022.2-RISC-V-747/renode/Renode.exe
 #   RENODE_FLAGS  default: --disable-xwt --console (no windows)
 #   SIM_TIME      emulated seconds after the first one, in which the script
 #                 injects a device event (default 3)
-# Outputs in build/sim: uart1.txt (MMUART1), renode.log (Renode's console).
+# Outputs in build/sim: uart1.txt and uart1-board1.txt (MMUART1 of each
+# board), renode.log (Renode's console). Both boards must show every line of
+# renode/expected-uart.txt; board 0 also those of expected-uart-board0.txt.
 # Renode runs in this directory (the script's paths are relative to it) and
 # reads end-of-file on stdin, so it exits even if a script command fails.
 RENODE_FLAGS ?= --disable-xwt --console
@@ -66,7 +69,8 @@ ifeq ($(strip $(RENODE)),)
 	$(error RENODE is not set: make sim RENODE=<path to Renode/Renode.exe>, e.g. SoftConsole's renode directory)
 endif
 	@mkdir -p $(SIM_DIR)
-	@rm -f $(SIM_DIR)/uart1.txt
+	@rm -f $(SIM_DIR)/uart1.txt $(SIM_DIR)/uart1-board1.txt
 	@echo "SIM $(SIM_TIME) s in Renode, log: $(SIM_DIR)/renode.log"
-	-"$(RENODE)" $(RENODE_FLAGS) -e '$$uart_log=@$(CURDIR)/$(SIM_DIR)/uart1.txt; $$runtime="$(SIM_TIME)"; include @renode/run-demo.resc' < /dev/null > $(SIM_DIR)/renode.log 2>&1
-	sh renode/check-uart.sh $(SIM_DIR)/uart1.txt renode/expected-uart.txt $(SIM_DIR)/renode.log
+	-"$(RENODE)" $(RENODE_FLAGS) -e '$$uart_log=@$(CURDIR)/$(SIM_DIR)/uart1.txt; $$uart_log_b=@$(CURDIR)/$(SIM_DIR)/uart1-board1.txt; $$runtime="$(SIM_TIME)"; include @renode/run-demo.resc' < /dev/null > $(SIM_DIR)/renode.log 2>&1
+	sh renode/check-uart.sh $(SIM_DIR)/uart1.txt $(SIM_DIR)/renode.log renode/expected-uart.txt renode/expected-uart-board0.txt
+	sh renode/check-uart.sh $(SIM_DIR)/uart1-board1.txt $(SIM_DIR)/renode.log renode/expected-uart.txt

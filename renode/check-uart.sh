@@ -3,22 +3,23 @@
 #
 # Checks the MMUART1 output of a headless Renode run ('make sim').
 #
-#   sh renode/check-uart.sh <uart log> <expected lines> [<renode log>]
+#   sh renode/check-uart.sh <uart log> <renode log> <expected lines>...
 #
 # Fails if the log is missing or empty, if any line reports a failure
 # ("FAIL", "no response", or a line starting "*** ": a fault report from
-# the libraries), or if a line from the expected file (fixed strings; '#'
-# comment lines and blank lines skipped) does not appear. POSIX sh: also runs
+# the libraries), or if a line from the expected files (fixed strings; '#'
+# comment lines and blank lines skipped) does not appear. The renode log is
+# only shown when the UART log is empty. POSIX sh: also runs
 # under SoftConsole's busybox sh on Windows.
 
 uart="$1"
-expected="$2"
-renode_log="$3"
+renode_log="$2"
 
-if [ -z "$uart" ] || [ -z "$expected" ]; then
-    echo "usage: $0 <uart log> <expected lines> [<renode log>]" >&2
+if [ "$#" -lt 3 ]; then
+    echo "usage: $0 <uart log> <renode log> <expected lines>..." >&2
     exit 2
 fi
+shift 2
 
 if [ ! -s "$uart" ]; then
     echo "check-uart: FAIL: no UART output in $uart" >&2
@@ -39,20 +40,22 @@ fi
 
 found=0
 missing=0
-# The last line may lack a newline: still read it.
-while IFS= read -r line || [ -n "$line" ]; do
-    line=$(printf '%s' "$line" | tr -d '\r')
-    case "$line" in
-        ''|'#'*) continue ;;
-    esac
-    if grep -F -e "$line" "$uart" > /dev/null; then
-        found=$((found + 1))
-    else
-        echo "check-uart: FAIL: missing: $line" >&2
-        missing=$((missing + 1))
-        status=1
-    fi
-done < "$expected"
+for expected in "$@"; do
+    # The last line may lack a newline: still read it.
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=$(printf '%s' "$line" | tr -d '\r')
+        case "$line" in
+            ''|'#'*) continue ;;
+        esac
+        if grep -F -e "$line" "$uart" > /dev/null; then
+            found=$((found + 1))
+        else
+            echo "check-uart: FAIL: missing in $uart: $line" >&2
+            missing=$((missing + 1))
+            status=1
+        fi
+    done < "$expected"
+done
 
 if [ "$status" -eq 0 ]; then
     echo "check-uart: PASS ($found expected lines found in $uart)"

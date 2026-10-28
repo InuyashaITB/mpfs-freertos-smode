@@ -3,11 +3,12 @@
 | File | What |
 |---|---|
 | `mpfs-ddr-38bit-cached-3gib.repl` | Adds 2 GiB of DDR at `0x10_4000_0000` for the Sv39 DDR window |
-| `mpfs-sim-peripherals.repl` | Simulated devices on the MSS SPI/I2C controllers |
+| `mpfs-sim-peripherals.repl` | Simulated devices on the MSS SPI/I2C controllers and the fabric (LiteEth) |
 | `models/*.cs` | C# device models, compiled by Renode at run time |
-| `run-demo.resc` | Loads the board and devices as the launcher does, runs the demo without a debugger, MMUART1 to a file |
-| `expected-uart.txt` | Lines the UART output must contain (one per self-test) |
-| `check-uart.sh` | Checks a UART log against `expected-uart.txt` (POSIX sh / busybox sh) |
+| `run-demo.resc` | Two boards, each loaded as the launcher loads one, on one Ethernet switch; runs the demo without a debugger, each board's MMUART1 to a file |
+| `expected-uart.txt` | Lines both boards' UART output must contain (one per self-test) |
+| `expected-uart-board0.txt` | Lines only board 0 must show (the injected protocol event) |
+| `check-uart.sh` | Checks a UART log against expected-line files (POSIX sh / busybox sh) |
 
 Models are written against the **Renode 1.13** API (SoftConsole v2022.2):
 `Machine`, not the newer `IMachine`. Renode compiles a model when it is
@@ -24,12 +25,14 @@ include @renode/models/MpfsI2c.cs
 include @renode/models/I2cEeprom.cs
 machine UnregisterFromParent sysbus.i2c0      # replaced by MpfsI2c in the repl
 machine LoadPlatformDescription @renode/mpfs-sim-peripherals.repl
+sysbus.eth MAC "02:4d:50:46:53:00"            # must match the firmware's (a repl cannot set it)
 ```
 
 ## Headless run: `make sim`
 
-Builds, runs the demo in Renode with no windows and no debugger, and checks
-UART1. From the project root, in the same shell you build from (SoftConsole's
+Builds, runs the demo on **two boards** in Renode with no windows and no
+debugger, and checks each board's UART1. The boards share one Ethernet
+switch, so the raw-frame test (Phase 5a) has a peer. From the project root, in the same shell you build from (SoftConsole's
 `build_tools\bin` on `PATH` on Windows):
 
 ```
@@ -39,18 +42,27 @@ make sim RENODE=C:/Microchip/SoftConsole-v2022.2-RISC-V-747/<renode dir>/Renode.
 `RENODE` can also be set in the environment. Forward slashes avoid quoting
 problems.
 
-* **Outputs (`build/sim/`):** `uart1.txt` is MMUART1. `renode.log` is
-  Renode's console, including the model counters printed at the end.
+* **Outputs (`build/sim/`):** `uart1.txt` and `uart1-board1.txt` are the
+  boards' MMUART1. `renode.log` is Renode's console, including both boards'
+  model counters printed at the end.
+* **The boards** run the same ELF and differ only in:
+  * the GPIO2_0 strap, which is the board id (board 1: `sysbus.gpio2 OnGPIO
+    0 true`, after configuring the pin as an input: `MPFS_GPIO` ignores
+    input changes on a pin that isn't one yet);
+  * the LiteEth MAC, `02:4d:50:46:53:<id>`, matching the firmware's.
+  * Board 0 also gets the injected protocol event.
 * **Result:** `check-uart: PASS (N expected lines found ...)`, or a `FAIL`
   line for each problem, and make stops with an error. The check fails if:
   * UART1 is empty (Renode did not start or a script command failed: see
     `renode.log`);
   * a line contains `FAIL` or `no response`, or starts with `*** ` (a fault
     report from the libraries);
-  * a line of `expected-uart.txt` is missing.
+  * a line of `expected-uart.txt` is missing (on either board), or a line of
+    `expected-uart-board0.txt` (on board 0).
 * **Options:**
   * `SIM_TIME=10`: emulated seconds after the first one, in which the script
-    injects a `spi1.proto` event. The default 3 takes about 30 s real time.
+    injects a `spi1.proto` event. The default 3 takes about a minute of real
+    time (two boards).
   * `RENODE_FLAGS=...`: default `--disable-xwt --console`.
 * **New self-test:** add its PASS line to `expected-uart.txt`. A new model
   also goes into `run-demo.resc` (`include`) and the launcher.
@@ -63,11 +75,16 @@ Renode 1.13 notes, which explain how the script is written:
   root.
 * If a script command fails, Renode stops the script and waits at its
   prompt. make gives it end-of-file on stdin, so it exits instead of hanging.
+* A macro defined while a machine is selected is only visible from that
+  machine, so the script defines its macros before `mach create`.
+* A repl cannot set the `MACAddress` property (type mismatch), but the
+  monitor can: `sysbus.eth MAC "02:..."`.
 
 By hand (Renode started in the project root, e.g. from its monitor window):
 
 ```
 $uart_log=@C:/path/to/uart1.txt
+$uart_log_b=@C:/path/to/uart1-board1.txt
 include @renode/run-demo.resc
 ```
 
@@ -100,9 +117,46 @@ in the Renode log.
 | Device | Model | Attached to | Phase |
 |---|---|---|---|
 | `proto` | `SPI.ProtoSpiDevice`: example request/response protocol, data-ready line (replaced the Phase 1 loopback) | `spi1`, `DataReady` → PLIC 119 (F2M_1) | 4 |
+| `eth` | `Network.LiteX_Ethernet` (built in): LiteEth soft MAC | fabric FIC3 `0x4000_0000`, IRQ → PLIC 120 (F2M_2) | 5a |
 | `flash` | `SPI.NorFlash`: 16 MiB serial NOR, JEDEC ID `EF 40 18` | `spi0` | 2 |
 | `i2c0` | `I2C.MpfsI2c`: MSS I2C controller, **replaces** the built-in `MPFS_I2C` | `sysbus` `0x2010A000`, PLIC 58 | 3 |
 | `eeprom` | `I2C.I2cEeprom`: AT24C256-like, 32 KiB, 64-byte pages | `i2c0` address `0x50` | 3 |
+
+## Soft Ethernet MAC (`eth`, Renode's `LiteX_Ethernet`)
+
+LiteEth in the fabric, behind FIC3. The library's Sv39 table identity maps
+gigapage 1 (`0x4000_0000`–`0x7FFF_FFFF`, RW) for it.
+
+| Region | Address | Contents |
+|---|---|---|
+| CSRs | `0x4000_0000` | Old LiteX layout: 8-bit subregisters every 4 bytes, MSB first |
+| MDIO | `0x4000_1000` | Bit-banged PHY interface (no PHY attached yet: Phase 5b) |
+| Buffers | `0x4001_0000` | 2 RX ("writer") slots, then 2 TX ("reader") slots, 0x800 bytes each, 32-bit accesses |
+
+* **CSRs:**
+  * `WriterSlot` 0x00 (reading it latches the slot), `WriterLength`
+    0x04–0x10, `WriterEvPending` 0x28 (write 1: release the latched slot),
+    `WriterEvEnable` 0x2C;
+  * `ReaderStart` 0x30, `ReaderReady` 0x34, `ReaderSlot` 0x3C,
+    `ReaderLength` 0x40/0x44, `ReaderEvPending` 0x4C, `ReaderEvEnable` 0x50.
+* **Renode 1.13 quirks:**
+  * The received length includes the FCS plus `len % 60` extra zero bytes.
+    That is a padding bug, so take the frame length from the payload.
+  * There are only two RX slots: a frame arriving while both are full is
+    dropped (with a warning).
+  * Frames are sent with the FCS appended; send at least 60 bytes.
+* **The switch** (`emulation CreateSwitch`) delivers a unicast frame only to
+  the interface whose `MAC` matches the destination, and broadcasts to all.
+  So the model's MAC must equal the firmware's: `sysbus.eth MAC
+  "02:4d:50:46:53:00"` in the launcher, and per board in `run-demo.resc`.
+  The repl cannot set it.
+* **Firmware:** `examples/freertos-demo/liteeth.c` and the raw-frame test in
+  `periph_selftest.c`:
+  * Each board broadcasts HELLO frames (EtherType 0x88B5) and answers a
+    peer's HELLO with a unicast ACK.
+  * Result: `[S] ETH: raw frames with board <n>: PASS`.
+  * A single board, as with the SoftConsole launcher, reports `no peer
+    answered (single board?)` after 3 s, which is not a failure.
 
 ## Protocol device (`spi1.proto`, `models/ProtoSpiDevice.cs`)
 

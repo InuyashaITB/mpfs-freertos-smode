@@ -257,7 +257,7 @@ boundaries.
 | 2 | §3 SPI NOR flash | Flash demo PASS in Renode. **Implemented; passes in Renode 1.13.1** (see "Phase 2 status"); waiting for the SoftConsole run |
 | 3 | §5 I2C EEPROM | EEPROM demo PASS. **Done**: `make sim` passes in Renode 1.13.1 and the SoftConsole run shows all EEPROM steps PASS (see "Phase 3 status") |
 | 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event. **Done**: `make sim` passes in Renode 1.13.1 and the SoftConsole run shows every protocol step PASS (see "Phase 4 status") |
-| 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames exchanged between the two simulated boards |
+| 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames exchanged between the two simulated boards. **Implemented; two-board `make sim` passes in Renode 1.13.1** (see "Phase 5a status") |
 | 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo between board 0 and board 1 |
 | 5c | *(optional)* `SocketBridge` model + user-mode host helper | Host helper answers ARP/ping from a board |
 | 6 | Docs (README, boot doc), Robot tests, LIBRARY-FIXED marking | Tests green; docs updated |
@@ -535,3 +535,55 @@ UART1:
     fatal error on the first transfer, because it has no device to talk to.
     The firmware's "no response" path can't be reached in Renode, but
     `make sim` fails as it should. Documented in `renode/README.md`.
+
+## Phase 5a status
+
+**Implemented; the two-board `make sim` passes in Renode 1.13.1.** Both
+boards' UART1 shows every self-test PASS and:
+
+```
+board 0: [S] ETH: board 0, MAC 02:4d:50:46:53:00, LiteEth at 0x40000000
+         [S] ETH: raw frames with board 1: PASS (tx 2, rx 2)
+board 1: [S] ETH: board 1, MAC 02:4d:50:46:53:01, LiteEth at 0x40000000
+         [S] ETH: raw frames with board 0: PASS (tx 2, rx 2)
+```
+
+- **Library:** `sv39.c` identity maps gigapage 1 (`0x4000_0000`, RW, no X):
+  the fabric windows FIC3 and FIC0. It is fixed like gigapage 0
+  (`SV39_FABRIC_PA`); `sv39.h`, the README and `boot-to-smode.md` are
+  updated.
+- **Renode:** the built-in `LiteX_Ethernet` as `eth` at CSR `0x4000_0000`,
+  MDIO `0x4000_1000` and buffers `0x4001_0000`, IRQ → PLIC 120 (F2M_2). Its
+  1.13 register map and quirks are in `renode/README.md`. Found by
+  experiment in 1.13.1:
+  - The switch delivers unicast frames only to the interface whose model MAC
+    matches; broadcast goes to all. So the model MAC is set to the
+    firmware's.
+  - A repl cannot set a `MACAddress` (type mismatch), but the monitor can.
+    The launcher and `run-demo.resc` set it.
+  - `MPFS_GPIO.OnGPIO` is ignored for a pin not configured as an input, so
+    the script configures GPIO2_0 before setting the strap.
+  - Renode macros are scoped to the selected machine, so the script defines
+    them before `mach create`.
+  - The RX length a 60-byte frame reports is 68: the FCS plus the
+    `len % 60` padding bug.
+- **`run-demo.resc`:** two boards with the same ELF on one switch. Board 1
+  has the GPIO2_0 strap and MAC `…:01`.
+  - `make sim` checks both UART logs against `expected-uart.txt`, and board
+    0 also against `expected-uart-board0.txt` (the injected event).
+  - `check-uart.sh` now takes `<uart> <renode log> <expected>...`.
+  - A run takes about a minute.
+- **Firmware:**
+  - `examples/freertos-demo/liteeth.c`: slot copy, padding to 60, bounded
+    waits.
+  - The symmetric HELLO/ACK test (EtherType 0x88B5), polled from the
+    console task and woken by the MAC's interrupt. The interrupt uses the
+    same disable/re-enable pattern as the protocol device.
+  - Prehook: FIC3 clock, and GPIO2_0 as an input.
+- **Negative checks:**
+  - With board 1 disconnected from the switch, board 0 reports "no peer
+    answered" and `make sim` fails.
+  - With the strap ineffective (both boards id 0, seen while getting it
+    right), both report `FAIL (peer has our board id ...)`.
+- **Not in 5a:** the PHY / MDIO and link state. They come with the 5b
+  NetworkInterface.
