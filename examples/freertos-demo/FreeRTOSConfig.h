@@ -87,8 +87,13 @@
  *----------------------------------------------------------*/
 #define configSUPPORT_STATIC_ALLOCATION             0
 #define configSUPPORT_DYNAMIC_ALLOCATION            1
-#define configTOTAL_HEAP_SIZE                       ( 32U * 1024U )
-#define configAPPLICATION_ALLOCATED_HEAP            0
+/* The heap is in DDR: the application defines ucHeap (ddr_buffers.ld puts it
+ * 16 MiB into the DDR window, VA 0xFFFFFFC0_41000000). FreeRTOS+TCP takes its
+ * network buffers and task stacks from it, which would not fit in L2LIM.
+ * DDR must be usable before the scheduler starts: true in Renode; on hardware
+ * a bootloader (HSS) or the HAL's DDR training must have set it up. */
+#define configTOTAL_HEAP_SIZE                       ( 4U * 1024U * 1024U )
+#define configAPPLICATION_ALLOCATED_HEAP            1
 
 /*-----------------------------------------------------------
  * Hooks / debug

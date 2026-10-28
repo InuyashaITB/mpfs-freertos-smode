@@ -25,8 +25,9 @@
 LIB_DIR := src
 APP_DIR := examples/freertos-demo
 
-# The demo's FreeRTOSConfig.h is compiled into the library (relative to src/).
-LIB_ARGS := FREERTOS_CONFIG_DIR=../$(APP_DIR)
+# The demo's FreeRTOSConfig.h and FreeRTOSIPConfig.h are compiled into the
+# libraries (relative to src/).
+LIB_ARGS := FREERTOS_CONFIG_DIR=../$(APP_DIR) FREERTOS_IP_CONFIG_DIR=../$(APP_DIR)
 APP_ARGS := MPFS_SMODE_DIR=../../build/dist OUT_DIR=../../build/$(APP_DIR)
 
 # PREFIX as given here, made usable from src/ (absolute paths kept).

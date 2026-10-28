@@ -9,6 +9,8 @@
 #   libfreertos_smode.a   FreeRTOS kernel + S-mode port + trap glue, built
 #                         against ${FREERTOS_CONFIG_DIR}/FreeRTOSConfig.h
 #   libmpfs_drivers.a     MSS drivers listed in MPFS_DRIVERS (for applications)
+#   libfreertos_tcp.a     FreeRTOS+TCP + the LiteEth network interface, built
+#                         against ${FREERTOS_IP_CONFIG_DIR}/FreeRTOSIPConfig.h
 #
 # Standalone:
 #   cmake -S src -B build-lib [-DCMAKE_BUILD_TYPE=Release]
@@ -36,6 +38,8 @@ mpfs_smode_default_march(_default_march)
 # Same variables as src/Makefile; relative paths are relative to src/.
 set(FREERTOS_CONFIG_DIR "freertos_glue/config" CACHE PATH
     "Directory with the FreeRTOSConfig.h compiled into libfreertos_smode (installed with it)")
+set(FREERTOS_IP_CONFIG_DIR "freertos_tcp/config" CACHE PATH
+    "Directory with the FreeRTOSIPConfig.h compiled into libfreertos_tcp (installed with it)")
 set(MPFS_BOARD_DIR "boards/icicle-kit-es" CACHE PATH "Board configuration headers")
 set(MPFS_LINKER_SCRIPT "" CACHE FILEPATH
     "Linker script installed for applications (default: <board>/platform_config/linker/mpfs-lim-sv39.ld)")
@@ -72,6 +76,7 @@ endif()
 
 set(SRC "${CMAKE_CURRENT_SOURCE_DIR}")
 get_filename_component(_config_dir "${FREERTOS_CONFIG_DIR}" ABSOLUTE BASE_DIR "${SRC}")
+get_filename_component(_ip_config_dir "${FREERTOS_IP_CONFIG_DIR}" ABSOLUTE BASE_DIR "${SRC}")
 get_filename_component(_board_dir  "${MPFS_BOARD_DIR}" ABSOLUTE BASE_DIR "${SRC}")
 if(MPFS_LINKER_SCRIPT)
     get_filename_component(_ldscript "${MPFS_LINKER_SCRIPT}" ABSOLUTE BASE_DIR "${SRC}")
@@ -81,10 +86,14 @@ endif()
 if(NOT EXISTS "${_config_dir}/FreeRTOSConfig.h")
     message(FATAL_ERROR "FREERTOS_CONFIG_DIR (${_config_dir}) has no FreeRTOSConfig.h")
 endif()
+if(NOT EXISTS "${_ip_config_dir}/FreeRTOSIPConfig.h")
+    message(FATAL_ERROR "FREERTOS_IP_CONFIG_DIR (${_ip_config_dir}) has no FreeRTOSIPConfig.h")
+endif()
 
 set(PLATFORM "${SRC}/platform")
 set(KERNEL   "${SRC}/middleware/FreeRTOS-Kernel")
 set(PORT     "${KERNEL}/portable/GCC/RISC-V-SMode")
+set(TCP      "${SRC}/middleware/FreeRTOS-Plus-TCP/source")
 
 mpfs_smode_boot_defs(${_boot} ${_first_hart} ${_last_hart} MPFS_BOOT_DEFS)
 mpfs_smode_flags("${MARCH}" "${LIBC_SPECS}" "${LIBC_LINK_SPECS}" "${MPFS_BOOT_DEFS}"
@@ -119,6 +128,15 @@ set(KERNEL_SRCS
     "${PORT}/port.c"
     "${PORT}/portASM.S")
 
+# FreeRTOS+TCP: every stack source (FreeRTOSIPConfig.h decides what each one
+# compiles to), the heap-based buffer allocator, and our LiteEth interface.
+file(GLOB TCP_STACK_SRCS CONFIGURE_DEPENDS "${TCP}/*.c")
+list(SORT TCP_STACK_SRCS)
+list(APPEND TCP_STACK_SRCS "${TCP}/portable/BufferManagement/BufferAllocation_2.c")
+set(TCP_NETIF_SRCS
+    "${SRC}/freertos_tcp/liteeth.c"
+    "${SRC}/freertos_tcp/NetworkInterface_LiteEth.c")
+
 set(DRIVER_SRCS)
 foreach(_drv IN LISTS MPFS_DRIVERS)
     if(NOT IS_DIRECTORY "${PLATFORM}/drivers/mss/${_drv}")
@@ -130,7 +148,7 @@ foreach(_drv IN LISTS MPFS_DRIVERS)
 endforeach()
 
 # Our own sources get the extra warnings; vendor code builds as before.
-set_source_files_properties(${SMODE_SRCS} ${GLUE_SRCS} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
+set_source_files_properties(${SMODE_SRCS} ${GLUE_SRCS} ${TCP_NETIF_SRCS} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 
 # Header search paths, as seen by code: "mpfs_hal/...", "drivers/mss/...",
 # "fpga_design_config/...", "mpfs_hal_config/...", "smode/...", "FreeRTOS.h".
@@ -143,17 +161,27 @@ set(LIB_INCLUDES
     "${KERNEL}/include"
     "${PORT}")
 
+# FreeRTOS+TCP headers, as seen by code: "FreeRTOS_IP.h", "FreeRTOSIPConfig.h",
+# "pack_struct_start.h", "NetworkInterface_LiteEth.h".
+set(TCP_INCLUDES
+    "${_ip_config_dir}"
+    "${TCP}/include"
+    "${TCP}/portable/Compiler/GCC"
+    "${SRC}/freertos_tcp")
+
 #-------------------------------------------------------------------------------
 # Libraries
 #-------------------------------------------------------------------------------
 add_library(mpfs_smode_boot STATIC ${HAL_SRCS} ${SMODE_SRCS})
 add_library(freertos_smode STATIC ${KERNEL_SRCS} ${GLUE_SRCS})
 add_library(mpfs_drivers STATIC ${DRIVER_SRCS})
+add_library(freertos_tcp STATIC ${TCP_STACK_SRCS} ${TCP_NETIF_SRCS})
 
-foreach(_lib mpfs_smode_boot freertos_smode mpfs_drivers)
+foreach(_lib mpfs_smode_boot freertos_smode mpfs_drivers freertos_tcp)
     target_compile_options(${_lib} PRIVATE ${MPFS_CFLAGS})
     target_include_directories(${_lib} PRIVATE ${LIB_INCLUDES})
 endforeach()
+target_include_directories(freertos_tcp PRIVATE ${TCP_INCLUDES})
 
 #-------------------------------------------------------------------------------
 # In-tree consumer targets: the same names and properties MpfsSmodeConfig.cmake
@@ -163,6 +191,8 @@ add_library(mpfs_smode_headers INTERFACE)
 target_include_directories(mpfs_smode_headers INTERFACE ${LIB_INCLUDES})
 target_compile_options(mpfs_smode_headers INTERFACE ${MPFS_CFLAGS})
 target_link_libraries(mpfs_drivers INTERFACE mpfs_smode_headers)
+target_include_directories(freertos_tcp INTERFACE ${TCP_INCLUDES})
+target_link_libraries(freertos_tcp INTERFACE mpfs_smode_headers)
 
 # Whole-archive: see MpfsSmodeConfig.cmake.
 add_library(mpfs_smode INTERFACE)
@@ -172,7 +202,7 @@ target_link_libraries(mpfs_smode INTERFACE
     mpfs_smode_headers)
 set_property(TARGET mpfs_smode APPEND PROPERTY INTERFACE_LINK_DEPENDS "${_ldscript}")
 
-foreach(_t mpfs_smode_boot freertos_smode mpfs_drivers mpfs_smode_headers mpfs_smode)
+foreach(_t mpfs_smode_boot freertos_smode mpfs_drivers freertos_tcp mpfs_smode_headers mpfs_smode)
     add_library(MpfsSmode::${_t} ALIAS ${_t})
 endforeach()
 
@@ -182,10 +212,12 @@ endforeach()
 #   lib/*.a, lib/ldscripts/mpfs-lim-sv39.ld
 #   include/{mpfs_hal,hal,drivers,fpga_design_config,mpfs_hal_config,smode}/
 #   include/freertos/       kernel + port headers, the FreeRTOSConfig.h used
+#   include/freertos_tcp/   FreeRTOS+TCP + LiteEth interface headers, the
+#                           FreeRTOSIPConfig.h used
 #   mpfs_smode.mk, mk/toolchain.mk, mk/build_config.mk          (make apps)
 #   lib/cmake/MpfsSmode/                                        (CMake apps)
 #-------------------------------------------------------------------------------
-install(TARGETS mpfs_smode_boot freertos_smode mpfs_drivers ARCHIVE DESTINATION lib)
+install(TARGETS mpfs_smode_boot freertos_smode mpfs_drivers freertos_tcp ARCHIVE DESTINATION lib)
 
 install(DIRECTORY "${PLATFORM}/" DESTINATION include FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY "${_board_dir}/fpga_design_config" DESTINATION include
@@ -199,6 +231,14 @@ install(FILES "${PORT}/portmacro.h" "${PORT}/portContext.h"
               "${PORT}/freertos_risc_v_chip_specific_extensions.h"
               "${_config_dir}/FreeRTOSConfig.h"
         DESTINATION include/freertos)
+install(DIRECTORY "${TCP}/include/" DESTINATION include/freertos_tcp
+        FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY "${TCP}/portable/Compiler/GCC/" DESTINATION include/freertos_tcp
+        FILES_MATCHING PATTERN "*.h")
+install(FILES "${SRC}/freertos_tcp/liteeth.h"
+              "${SRC}/freertos_tcp/NetworkInterface_LiteEth.h"
+              "${_ip_config_dir}/FreeRTOSIPConfig.h"
+        DESTINATION include/freertos_tcp)
 install(FILES "${_ldscript}" DESTINATION lib/ldscripts RENAME mpfs-lim-sv39.ld)
 
 install(FILES "${SRC}/mk/mpfs_smode.mk" DESTINATION .)
@@ -216,12 +256,13 @@ set(_cfg "${CMAKE_CURRENT_BINARY_DIR}/install-config")
 set(MPFS_SMODE_SETTINGS
     CROSS_COMPILE BUILD_TYPE MARCH LIBC_SPECS LIBC_LINK_SPECS
     LOADED_BY_BOOTLOADER MPFS_HAL_FIRST_HART MPFS_HAL_LAST_HART
-    FREERTOS_CONFIG_DIR MPFS_BOARD_DIR MPFS_LINKER_SCRIPT MPFS_DRIVERS)
+    FREERTOS_CONFIG_DIR FREERTOS_IP_CONFIG_DIR MPFS_BOARD_DIR MPFS_LINKER_SCRIPT MPFS_DRIVERS)
 set(_built_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 set(_built_LOADED_BY_BOOTLOADER "${_boot}")
 set(_built_MPFS_HAL_FIRST_HART "${_first_hart}")
 set(_built_MPFS_HAL_LAST_HART "${_last_hart}")
 set(_built_FREERTOS_CONFIG_DIR "${_config_dir}")
+set(_built_FREERTOS_IP_CONFIG_DIR "${_ip_config_dir}")
 set(_built_MPFS_BOARD_DIR "${_board_dir}")
 set(_built_MPFS_LINKER_SCRIPT "${_ldscript}")
 string(REPLACE ";" " " _built_MPFS_DRIVERS "${MPFS_DRIVERS}")

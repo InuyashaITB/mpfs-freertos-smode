@@ -17,6 +17,9 @@
 #                       code run in M-mode needs -mcmodel=medany -fno-jump-tables)
 #   MPFS_SMODE_LDFLAGS  link options + linker script
 #   MPFS_SMODE_LIBS     the libraries, in the right order (put after objects)
+#   MPFS_SMODE_TCP_LIBS libfreertos_tcp (FreeRTOS+TCP + LiteEth interface):
+#                       put it before MPFS_SMODE_LIBS if the application
+#                       uses networking
 #   MPFS_SMODE_DEPS     files to list as link prerequisites
 #   CC, OBJCOPY, SIZE, Q  from toolchain.mk
 #
@@ -56,7 +59,8 @@ MPFS_SMODE_LDSCRIPT ?= $(MPFS_SMODE_DIR)/lib/ldscripts/mpfs-lim-sv39.ld
 
 MPFS_SMODE_CFLAGS := $(MPFS_CFLAGS) \
                      -I$(MPFS_SMODE_DIR)/include \
-                     -I$(MPFS_SMODE_DIR)/include/freertos
+                     -I$(MPFS_SMODE_DIR)/include/freertos \
+                     -I$(MPFS_SMODE_DIR)/include/freertos_tcp
 
 MPFS_SMODE_LDFLAGS := $(MPFS_LDFLAGS) -T$(MPFS_SMODE_LDSCRIPT)
 
@@ -69,6 +73,10 @@ MPFS_SMODE_LIBS := -Wl,--whole-archive \
                    $(MPFS_SMODE_DIR)/lib/libfreertos_smode.a \
                    -Wl,--no-whole-archive \
                    $(MPFS_SMODE_DIR)/lib/libmpfs_drivers.a
+
+# FreeRTOS+TCP, compiled with the installed include/freertos_tcp/
+# FreeRTOSIPConfig.h (LIBRARY-FIXED, like FreeRTOSConfig.h).
+MPFS_SMODE_TCP_LIBS := $(MPFS_SMODE_DIR)/lib/libfreertos_tcp.a
 
 # Rewritten only when the libraries' settings change: make objects depend on
 # it to rebuild them then (the demo's Makefile does).

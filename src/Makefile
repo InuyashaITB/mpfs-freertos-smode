@@ -11,6 +11,9 @@
 #   libfreertos_smode.a   FreeRTOS kernel + S-mode port + trap glue, built
 #                         against $(FREERTOS_CONFIG_DIR)/FreeRTOSConfig.h
 #   libmpfs_drivers.a     MSS drivers listed in MPFS_DRIVERS (for applications)
+#   libfreertos_tcp.a     FreeRTOS+TCP + the LiteEth network interface, built
+#                         against $(FREERTOS_IP_CONFIG_DIR)/FreeRTOSIPConfig.h
+#                         (for applications that use networking)
 #
 # Run in this directory ('make -C src' from the project root):
 #   make                      libraries + install tree in DIST_DIR
@@ -26,6 +29,8 @@
 #   FREERTOS_CONFIG_DIR  FreeRTOSConfig.h compiled into libfreertos_smode and
 #                        installed with it. Default: freertos_glue/config,
 #                        the library's reference configuration
+#   FREERTOS_IP_CONFIG_DIR  FreeRTOSIPConfig.h compiled into libfreertos_tcp
+#                        and installed with it. Default: freertos_tcp/config
 #   MPFS_BOARD_DIR       board configuration headers
 #   MPFS_LINKER_SCRIPT   linker script installed for applications
 #   MPFS_DRIVERS         drivers/mss/<name> built into libmpfs_drivers
@@ -33,6 +38,7 @@
 #   DIST_DIR             install tree           ../build/dist
 
 FREERTOS_CONFIG_DIR ?= freertos_glue/config
+FREERTOS_IP_CONFIG_DIR ?= freertos_tcp/config
 MPFS_BOARD_DIR      ?= boards/icicle-kit-es
 MPFS_LINKER_SCRIPT  ?= $(MPFS_BOARD_DIR)/platform_config/linker/mpfs-lim-sv39.ld
 MPFS_DRIVERS        ?= mss_mmuart mss_gpio mss_spi mss_i2c
@@ -66,6 +72,9 @@ endif
 ifeq ($(wildcard $(FREERTOS_CONFIG_DIR)/FreeRTOSConfig.h),)
   $(error FREERTOS_CONFIG_DIR ($(FREERTOS_CONFIG_DIR)) has no FreeRTOSConfig.h)
 endif
+ifeq ($(wildcard $(FREERTOS_IP_CONFIG_DIR)/FreeRTOSIPConfig.h),)
+  $(error FREERTOS_IP_CONFIG_DIR ($(FREERTOS_IP_CONFIG_DIR)) has no FreeRTOSIPConfig.h)
+endif
 
 # Recursive wildcard: $(call rwildcard,dir,*.c *.S)
 rwildcard = $(foreach d,$(wildcard $(1:=/*)),$(call rwildcard,$d,$2) $(filter $(subst *,%,$2),$d))
@@ -73,6 +82,7 @@ rwildcard = $(foreach d,$(wildcard $(1:=/*)),$(call rwildcard,$d,$2) $(filter $(
 PLATFORM := platform
 KERNEL   := middleware/FreeRTOS-Kernel
 PORT     := $(KERNEL)/portable/GCC/RISC-V-SMode
+TCP      := middleware/FreeRTOS-Plus-TCP/source
 
 #-------------------------------------------------------------------------------
 # Sources
@@ -100,6 +110,13 @@ KERNEL_SRCS := $(KERNEL)/croutine.c \
                $(PORT)/port.c \
                $(PORT)/portASM.S
 
+# FreeRTOS+TCP: every stack source (FreeRTOSIPConfig.h decides what each one
+# compiles to), the heap-based buffer allocator, and our LiteEth interface.
+TCP_STACK_SRCS := $(sort $(wildcard $(TCP)/*.c)) \
+                  $(TCP)/portable/BufferManagement/BufferAllocation_2.c
+TCP_NETIF_SRCS := freertos_tcp/liteeth.c \
+                  freertos_tcp/NetworkInterface_LiteEth.c
+
 DRIVER_SRCS := $(foreach d,$(MPFS_DRIVERS),$(call rwildcard,$(PLATFORM)/drivers/mss/$d,*.c *.S))
 $(foreach d,$(MPFS_DRIVERS),$(if $(wildcard $(PLATFORM)/drivers/mss/$d),,\
     $(error MPFS_DRIVERS: no driver directory $(PLATFORM)/drivers/mss/$d)))
@@ -109,7 +126,8 @@ obj = $(patsubst %,$(OBJ_DIR)/%.o,$(1))
 BOOT_OBJS     := $(call obj,$(HAL_SRCS) $(SMODE_SRCS))
 FREERTOS_OBJS := $(call obj,$(KERNEL_SRCS) $(GLUE_SRCS))
 DRIVER_OBJS   := $(call obj,$(DRIVER_SRCS))
-ALL_OBJS      := $(BOOT_OBJS) $(FREERTOS_OBJS) $(DRIVER_OBJS)
+TCP_OBJS      := $(call obj,$(TCP_STACK_SRCS) $(TCP_NETIF_SRCS))
+ALL_OBJS      := $(BOOT_OBJS) $(FREERTOS_OBJS) $(DRIVER_OBJS) $(TCP_OBJS)
 
 # Header search paths, as seen by code: "mpfs_hal/...", "drivers/mss/...",
 # "fpga_design_config/...", "mpfs_hal_config/...", "smode/...", "FreeRTOS.h".
@@ -121,8 +139,16 @@ LIB_INCLUDES := -I$(PLATFORM) \
                 -I$(KERNEL)/include \
                 -I$(PORT)
 
+# FreeRTOS+TCP headers, as seen by code: "FreeRTOS_IP.h", "FreeRTOSIPConfig.h",
+# "pack_struct_start.h", "NetworkInterface_LiteEth.h".
+TCP_INCLUDES := -I$(FREERTOS_IP_CONFIG_DIR) \
+                -I$(TCP)/include \
+                -I$(TCP)/portable/Compiler/GCC \
+                -Ifreertos_tcp
+$(TCP_OBJS): LIB_INCLUDES += $(TCP_INCLUDES)
+
 # Our own sources get the extra warnings; vendor code builds as before.
-$(call obj,$(SMODE_SRCS) $(GLUE_SRCS)): EXTRA_CFLAGS := -Wall -Wextra
+$(call obj,$(SMODE_SRCS) $(GLUE_SRCS) $(TCP_NETIF_SRCS)): EXTRA_CFLAGS := -Wall -Wextra
 
 #-------------------------------------------------------------------------------
 # Libraries
@@ -130,7 +156,8 @@ $(call obj,$(SMODE_SRCS) $(GLUE_SRCS)): EXTRA_CFLAGS := -Wall -Wextra
 BOOT_LIB     := $(STAGE)/lib/libmpfs_smode_boot.a
 FREERTOS_LIB := $(STAGE)/lib/libfreertos_smode.a
 DRIVERS_LIB  := $(STAGE)/lib/libmpfs_drivers.a
-LIBS         := $(BOOT_LIB) $(FREERTOS_LIB) $(DRIVERS_LIB)
+TCP_LIB      := $(STAGE)/lib/libfreertos_tcp.a
+LIBS         := $(BOOT_LIB) $(FREERTOS_LIB) $(DRIVERS_LIB) $(TCP_LIB)
 
 .PHONY: all stage install clean FORCE
 
@@ -151,6 +178,7 @@ $(OBJ_DIR)/%.S.o: %.S
 $(BOOT_LIB): $(BOOT_OBJS)
 $(FREERTOS_LIB): $(FREERTOS_OBJS)
 $(DRIVERS_LIB): $(DRIVER_OBJS)
+$(TCP_LIB): $(TCP_OBJS)
 $(LIBS):
 	@echo "AR  $@"
 	@mkdir -p $(@D)
@@ -165,6 +193,8 @@ $(LIBS):
 #   lib/*.a, lib/ldscripts/mpfs-lim-sv39.ld
 #   include/{mpfs_hal,hal,drivers,fpga_design_config,mpfs_hal_config,smode}/
 #   include/freertos/       kernel + port headers, the FreeRTOSConfig.h used
+#   include/freertos_tcp/   FreeRTOS+TCP + LiteEth interface headers, the
+#                           FreeRTOSIPConfig.h used
 #   mpfs_smode.mk, mk/toolchain.mk, mk/build_config.mk          (make apps)
 #   lib/cmake/MpfsSmode/                                        (CMake apps)
 #-------------------------------------------------------------------------------
@@ -188,6 +218,10 @@ $(call stage,include/smode,$(wildcard smode/*.h),smode)
 $(call stage,include/freertos,$(wildcard $(KERNEL)/include/*.h),$(KERNEL)/include)
 $(call stage,include/freertos,$(PORT)/portmacro.h $(PORT)/portContext.h $(PORT)/freertos_risc_v_chip_specific_extensions.h,$(PORT))
 $(call stage,include/freertos,$(FREERTOS_CONFIG_DIR)/FreeRTOSConfig.h,$(FREERTOS_CONFIG_DIR))
+$(call stage,include/freertos_tcp,$(wildcard $(TCP)/include/*.h),$(TCP)/include)
+$(call stage,include/freertos_tcp,$(wildcard $(TCP)/portable/Compiler/GCC/*.h),$(TCP)/portable/Compiler/GCC)
+$(call stage,include/freertos_tcp,freertos_tcp/liteeth.h freertos_tcp/NetworkInterface_LiteEth.h,freertos_tcp)
+$(call stage,include/freertos_tcp,$(FREERTOS_IP_CONFIG_DIR)/FreeRTOSIPConfig.h,$(FREERTOS_IP_CONFIG_DIR))
 $(call stage,lib/ldscripts,$(MPFS_LINKER_SCRIPT),$(patsubst %/,%,$(dir $(MPFS_LINKER_SCRIPT))))
 $(call stage,,mk/mpfs_smode.mk,mk)
 $(call stage,mk,mk/toolchain.mk,mk)

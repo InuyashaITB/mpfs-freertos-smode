@@ -34,9 +34,10 @@
  * Before the scheduler starts, s_mode_main() runs the peripheral self-tests
  * (periph_selftest.c; polled, bounded): the SPI1 protocol device and the SPI0 NOR
  * flash (spi_flash.c), against the Renode models in renode/models. The I2C
- * EEPROM test needs interrupts, so the console task runs it when it starts
- * (no extra task: the heap has little room left). The console task also runs
- * the raw Ethernet exchange with a peer board (LiteEth, liteeth.c).
+ * EEPROM test needs interrupts, so the console task runs it when it starts.
+ *
+ * Networking (net_demo.c): FreeRTOS+TCP (libfreertos_tcp) on the LiteEth soft
+ * MAC. Started from s_mode_main(); ping and TCP echo with a peer board.
  *
  * By the time s_mode_main() runs, the library's smode_start has turned the
  * Sv39 MMU on and this code executes at its virtual (high) addresses.
@@ -68,6 +69,8 @@
 #include "ddr_buffers.h"
 #include "periph_selftest.h"
 #include "proto_dev.h"
+#include "net_demo.h"
+#include "NetworkInterface_LiteEth.h"
 
 typedef enum
 {
@@ -75,7 +78,6 @@ typedef enum
     EVT_GPIO2_31 = 2,
     EVT_F2M_0    = 3,
     EVT_PROTO    = 4,   /* SPI1 protocol device: data-ready (F2M_1) */
-    EVT_ETH      = 5,   /* LiteEth: frame received (F2M_2) */
 } app_event_t;
 
 #define HEARTBEAT_PERIOD_MS     (5000U)
@@ -205,13 +207,11 @@ uint8_t fabric_f2h_1_plic_IRQHandler(void)
     return EXT_IRQ_DISABLE;
 }
 
-/* LiteEth soft MAC: a received frame is pending (level, until the slot is
- * handed back). Same pattern as the protocol device: disable here, the
- * console task drains the RX slots and re-enables the source. */
+/* LiteEth soft MAC (F2M_2): handled by the FreeRTOS+TCP network interface,
+ * which also enables this source for the S context. */
 uint8_t fabric_f2h_2_plic_IRQHandler(void)
 {
-    prvPostEvent(EVT_ETH);
-    return EXT_IRQ_DISABLE;
+    return liteeth_netif_irq_handler();
 }
 
 uint8_t fabric_f2h_0_plic_IRQHandler(void)
@@ -224,11 +224,6 @@ uint8_t fabric_f2h_0_plic_IRQHandler(void)
 /*------------------------------------------------------------------------------
  * Tasks
  */
-static uint32_t prvNowMs(void)
-{
-    return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
-}
-
 static void vConsoleTask(void *pvParameters)
 {
     (void)pvParameters;
@@ -247,10 +242,6 @@ static void vConsoleTask(void *pvParameters)
         prvPrintf("[S] I2C0 EEPROM (S-mode, MSS_I2C driver, interrupts): %s\r\n",
                   (0U == failed) ? "PASS" : "FAIL");
     }
-
-    /* Raw Ethernet frames with a peer board: polled from the loop below. */
-    eth_raw_test_start(prvPrintf, prvNowMs());
-    BaseType_t xEthIrq = pdFALSE;
 
     for (;;)
     {
@@ -287,23 +278,12 @@ static void vConsoleTask(void *pvParameters)
             prvConsoleUnlock(xLocked);
             SPLIC_enable(FABRIC_F2H_1_PLIC);
         }
-        else if ((pdPASS == xQueued) && (EVT_ETH == ucEvt))
-        {
-            xEthIrq = pdTRUE;   /* the frames are drained by the poll below */
-        }
         else if (pdPASS == xQueued)
         {
             static const char * const names[] = { "?", "GPIO2_30", "GPIO2_31", "F2M_0" };
             prvPrintf("[S] PLIC S-context interrupt: %s (tick %lu)\r\n",
                       names[(ucEvt <= 3U) ? ucEvt : 0U],
                       (unsigned long)xTaskGetTickCount());
-        }
-
-        eth_raw_test_poll(prvPrintf, prvNowMs());
-        if (pdFALSE != xEthIrq)
-        {
-            xEthIrq = pdFALSE;
-            SPLIC_enable(FABRIC_F2H_2_PLIC);
         }
 
         size_t n = MSS_UART_get_rx(&g_mss_uart1_lo, rx, sizeof(rx));
@@ -747,7 +727,6 @@ static const PLIC_IRQn_Type g_smode_irqs[] =
     GPIO1_BIT17_or_GPIO2_BIT31_PLIC_31,
     FABRIC_F2H_0_PLIC,
     FABRIC_F2H_1_PLIC,
-    FABRIC_F2H_2_PLIC,
 };
 
 void s_mode_main(void)
@@ -813,6 +792,7 @@ void s_mode_main(void)
     xOk &= xTaskCreate(vSpinTask, "spin", 768, NULL, tskIDLE_PRIORITY, NULL);
     xOk &= xTaskCreate(vDdrTask, "ddr", 512, NULL, 1, NULL);
     xOk &= xTaskCreate(vHeartbeatTask, "heartbeat", 512, NULL, 1, NULL);
+    xOk &= net_demo_start(prvPrintf);
     configASSERT(xOk == pdPASS);
 
     prvPrint("[S] starting scheduler\r\n");

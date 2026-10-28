@@ -64,6 +64,7 @@ After the handoff, M-mode on U54_1 only runs for traps from S-mode:
 | `libmpfs_smode_boot.a` | MPFS HAL (start-up, `mss_entry.S`, PLIC/CLINT/PMP/L2, NWC), `u54_1()`, M-mode SBI shim, Sv39 bring-up, `smode_start`, diagnostics (`src/platform/mpfs_hal`, `src/platform/hal`, `src/smode`) |
 | `libfreertos_smode.a` | FreeRTOS kernel, `heap_4`, the S-mode port, PLIC dispatch / fault reporting / FreeRTOS hooks, `smode_os_init()` (`src/middleware/FreeRTOS-Kernel`, `src/freertos_glue`). Compiled against the `FreeRTOSConfig.h` in `FREERTOS_CONFIG_DIR` |
 | `libmpfs_drivers.a` | MSS drivers named in `MPFS_DRIVERS` (`mss_mmuart`, `mss_gpio`, `mss_spi`, `mss_i2c`: the ones in this repository), for applications. The two libraries above do not use them |
+| `libfreertos_tcp.a` | FreeRTOS+TCP V4.4.2 (`src/middleware/FreeRTOS-Plus-TCP`, IPv4, `BufferAllocation_2`) and the network interface for a LiteEth soft MAC in the fabric (`src/freertos_tcp`). Compiled against the `FreeRTOSIPConfig.h` in `FREERTOS_IP_CONFIG_DIR`. Only for applications that use networking: link it before the others (`MPFS_SMODE_TCP_LIBS`, `MpfsSmode::freertos_tcp`) |
 
 The libraries only handle **U54_1**. They define `u54_1()` and nothing for
 the E51 or U54_2..4: those run the application's `e51()` / `u54_2()` ..
@@ -102,9 +103,9 @@ Three Makefiles, one per role:
 
 | Makefile | Role | Knows about |
 |---|---|---|
-| `src/Makefile` | **Library**: builds the three `.a` files and the install tree | only `src/` |
+| `src/Makefile` | **Library**: builds the four `.a` files and the install tree | only `src/` |
 | `examples/freertos-demo/Makefile` | **Application**: builds the demo ELF | only an install tree (`MPFS_SMODE_DIR`) |
-| `Makefile` (project root) | **Orchestrator**, what SoftConsole runs: no build rules, runs the other two | both, and which `FreeRTOSConfig.h` the library gets |
+| `Makefile` (project root) | **Orchestrator**, what SoftConsole runs: no build rules, runs the other two | both, and which `FreeRTOSConfig.h` / `FreeRTOSIPConfig.h` the libraries get |
 
 From the project root:
 
@@ -141,10 +142,13 @@ build/dist/                          the install tree ('make install' copies it)
   lib/libmpfs_smode_boot.a
   lib/libfreertos_smode.a
   lib/libmpfs_drivers.a
+  lib/libfreertos_tcp.a
   lib/ldscripts/mpfs-lim-sv39.ld
   include/                           mpfs_hal/, hal/, drivers/, fpga_design_config/,
                                      mpfs_hal_config/, smode/ (incl. mpfs_smode.h)
   include/freertos/                  kernel + port headers, the FreeRTOSConfig.h used
+  include/freertos_tcp/              FreeRTOS+TCP + LiteEth interface headers,
+                                     the FreeRTOSIPConfig.h used
   mpfs_smode.mk                      for application Makefiles
   mk/toolchain.mk, mk/build_config.mk
 build/lib/obj/<BUILD_TYPE>/            library objects
@@ -163,6 +167,7 @@ application.
 | `FREERTOS_CONFIG_DIR` | `freertos_glue/config` (library's reference config); the root Makefile passes `../examples/freertos-demo` | `FreeRTOSConfig.h` that `libfreertos_smode` is built against (and installs). Relative to `src/` |
 | `MPFS_BOARD_DIR` | `boards/icicle-kit-es` | board configuration headers (relative to `src/`) |
 | `MPFS_LINKER_SCRIPT` | `<board>/platform_config/linker/mpfs-lim-sv39.ld` | installed with the libraries |
+| `FREERTOS_IP_CONFIG_DIR` | `freertos_tcp/config` (library's reference config); the root Makefile passes `../examples/freertos-demo` | `FreeRTOSIPConfig.h` that `libfreertos_tcp` is built against (and installs). Relative to `src/` |
 | `MPFS_DRIVERS` | `mss_mmuart mss_gpio mss_spi mss_i2c` | drivers in `libmpfs_drivers`. To use another MSS driver, copy its folder from Microchip's `platform` repository into `src/platform/drivers/mss/` and add it here |
 | `LOADED_BY_BOOTLOADER` | `0` | `0` standalone, `1` started by a bootloader (e.g. HSS); see [Boot modes](#boot-modes) |
 | `MPFS_HAL_FIRST_HART` / `MPFS_HAL_LAST_HART` | `0`/`4` standalone, `1`/`1` with a bootloader | harts the HAL starts; must include hart 1 |
@@ -188,7 +193,7 @@ SoftConsole's `build_tools\bin` first on PATH.
 
 | CMakeLists.txt | Role |
 |---|---|
-| `src/CMakeLists.txt` | **Library**: the three `.a` files, `MpfsSmode::` targets, `install()` |
+| `src/CMakeLists.txt` | **Library**: the four `.a` files, `MpfsSmode::` targets, `install()` |
 | `examples/freertos-demo/CMakeLists.txt` | **Application**: uses only `MpfsSmode::` targets (`find_package(MpfsSmode)` when built on its own) |
 | `CMakeLists.txt` (root) | **Orchestrator**: adds both, builds the library with the demo's `FreeRTOSConfig.h` |
 
@@ -246,6 +251,7 @@ the library.
 | Setting | Where | Level |
 |---|---|---|
 | `FreeRTOSConfig.h` (tick, priorities, heap size, port options, struct layouts) | `FREERTOS_CONFIG_DIR`; installed next to `FreeRTOS.h` | **LIBRARY-FIXED** |
+| `FreeRTOSIPConfig.h` (IP options, buffers, LiteEth addresses / PLIC source) | `FREERTOS_IP_CONFIG_DIR`; installed next to `FreeRTOS_IP.h` | **LIBRARY-FIXED** |
 | Boot mode: `LOADED_BY_BOOTLOADER`, `MPFS_HAL_FIRST_HART`, `MPFS_HAL_LAST_HART` | build variables | **LIBRARY-FIXED**, enforced |
 | `MARCH`, `LIBC_SPECS` (and `-mabi=lp64d -mcmodel=medany -fno-jump-tables`) | build variables, `mk/toolchain.mk` | **LIBRARY-FIXED**, enforced |
 | Board configuration: `fpga_design_config/`, `mss_sw_config.h` | `MPFS_BOARD_DIR` | **LIBRARY-FIXED** |
@@ -389,6 +395,22 @@ configuration, `src/freertos_glue/config/FreeRTOSConfig.h`.
 `configPORT_YIELD_VIA_SBI_IPI` / `configSBI_HART_ID` must stay consistent
 with `SMODE_HART` (checked at build time).
 
+`FreeRTOSIPConfig.h` works the same way for `libfreertos_tcp.a`
+(`FREERTOS_IP_CONFIG_DIR`, default `src/freertos_tcp/config/`). The LiteEth
+interface takes its register addresses, PHY address and PLIC source from it
+(`ipconfigLITEETH_*`, see `src/freertos_tcp/NetworkInterface_LiteEth.h`);
+the application routes that PLIC source's handler to
+`liteeth_netif_irq_handler()`.
+
+**FreeRTOS heap in DDR (demo):** the demo's `FreeRTOSConfig.h` sets
+`configAPPLICATION_ALLOCATED_HEAP` with a 4 MiB heap, and `ddr_buffers.ld`
+places `ucHeap` 16 MiB into the DDR window. FreeRTOS+TCP's buffers and the
+task stacks would not fit in L2LIM. In Renode DDR just works; on hardware DDR
+must be trained before `s_mode_main()` (a bootloader such as HSS, or the
+HAL's `DDR_SUPPORT`). The code itself still runs from L2LIM: the Debug
+build uses about 245 of its 255 KiB, so a larger application needs a Release
+build (`-Os`) or code in DDR.
+
 ## Files added or changed vs. mpfs-gpio-interrupt
 
 | File | What |
@@ -409,18 +431,20 @@ with `SMODE_HART` (checked at build time).
 | `src/smode/smode_start.S` | *(mmu-sv39)* S-mode entry: satp on, jump to the virtual alias, `smode_os_init()`, `s_mode_main()` |
 | `src/smode/smode_irq.h`, `src/freertos_glue/smode_irq.c` | S-mode PLIC dispatch, exception/assert/stack-overflow reports, `smode_os_init()` |
 | `src/middleware/FreeRTOS-Kernel/` | Kernel V11.3.2 (core files, `include/`, `MemMang/heap_4.c`) |
+| `src/middleware/FreeRTOS-Plus-TCP/` | FreeRTOS+TCP V4.4.2, unmodified subset (see its README.md) |
+| `src/freertos_tcp/` | LiteEth driver (`liteeth.*`, slot copy + bit-banged MDIO), FreeRTOS+TCP network interface (`NetworkInterface_LiteEth.*`), reference `config/FreeRTOSIPConfig.h` |
 | `.../portable/GCC/RISC-V-SMode/` | The S-mode port (see its README.md) |
 | `src/middleware/README.md` | Deviations from the upstream FreeRTOS RISC-V port, M-mode vs S-mode |
 | `src/boards/icicle-kit-es/platform_config/linker/mpfs-lim-sv39.ld` | *(mmu-sv39)* Linker script with physical/virtual regions |
 | `src/boards/icicle-kit-es/platform_config/mpfs_hal_config/mss_sw_config.h` | `DDR_SUPPORT` commented out (Renode start-up; image runs from L2LIM) |
-| `examples/freertos-demo/` | The demo application: `Makefile` (template for new apps), `FreeRTOSConfig.h` (1 kHz tick, mtime 1 MHz @ 0x0200BFF8, FPU context on, 32 KB heap; the root Makefile builds the library with it) |
+| `examples/freertos-demo/` | The demo application: `Makefile` (template for new apps), `FreeRTOSConfig.h` (1 kHz tick, mtime 1 MHz @ 0x0200BFF8, FPU context on, 4 MiB heap in DDR; the root Makefile builds the library with it), `FreeRTOSIPConfig.h` |
+| `examples/freertos-demo/net_demo.*` | FreeRTOS+TCP demo: static IP from the board strap, TCP echo server (port 7), client that pings the peer board and runs a TCP echo with it |
 | `examples/freertos-demo/app_main.c` | `s_mode_main()`: PLIC sources, demo tasks (console, blink, spin "DDR Life", ddr, heartbeat) and PLIC handlers |
 | `examples/freertos-demo/m_prehook.c` | `smode_m_prehook()`: MMUART1, GPIO2, GPIO→PLIC routing; `smode_diag_puts()` on MMUART1 |
 | `examples/freertos-demo/other_harts.c` | `e51()` (UART0 banner) and `u54_2..4()`: park in WFI |
 | `examples/freertos-demo/ddr_buffers.*` | *(mmu-sv39)* 3 x 1 GiB buffers: linker symbols (`ddr_buffers.ld`) + `g_ddr_buffer[]` pointer table |
 | `examples/freertos-demo/periph_selftest.*` | Peripheral self-tests: SPI1 protocol device and SPI0 NOR flash before the scheduler, I2C0 EEPROM in the console task |
 | `examples/freertos-demo/spi_xfer.*` | Bounded SPI master transfer (one chip-select window), shared by the SPI drivers |
-| `examples/freertos-demo/liteeth.*` | Minimal driver for the LiteEth soft MAC on FIC3 (slot buffers, no DMA) |
 | `examples/freertos-demo/proto_dev.*` | Driver for the example-protocol SPI device (framing, CRC-8, response polling) |
 | `examples/freertos-demo/spi_flash.*` | Minimal SPI NOR flash driver on `MSS_SPI` (bounded, one transfer per command) |
 | `examples/freertos-demo/i2c_eeprom.*` | Minimal I2C EEPROM driver on `MSS_I2C` (interrupt-driven, page split, ACK polling) |

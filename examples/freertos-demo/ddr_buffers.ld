@@ -27,3 +27,16 @@ g_ddr_buffer_2  = ORIGIN(ddr_cached_38bit_va) + 2 * DDR_BUFFER_SIZE;
 
 ASSERT(3 * DDR_BUFFER_SIZE <= LENGTH(ddr_cached_38bit_va),
        "DDR buffers do not fit in ddr_cached_38bit_va")
+
+/* The FreeRTOS heap (configAPPLICATION_ALLOCATED_HEAP = 1 in FreeRTOSConfig.h:
+ * heap_4 uses the application's ucHeap[configTOTAL_HEAP_SIZE]). It lives in
+ * buf0 from 16 MiB on, where nothing else in the demo goes (buf0 users: the
+ * ddr task at offsets 0, 512 MiB and the last qword; grid A at 256 MiB). Like
+ * the buffers it is a plain symbol, and it is within +/-2 GiB of the code, so
+ * heap_4's PC-relative references to it link. */
+DDR_HEAP_OFFSET = 0x01000000;       /* 16 MiB into buf0 */
+DDR_HEAP_SIZE   = 0x00400000;       /* = configTOTAL_HEAP_SIZE */
+ucHeap          = g_ddr_buffer_0 + DDR_HEAP_OFFSET;
+
+ASSERT(DDR_HEAP_OFFSET + DDR_HEAP_SIZE <= 0x10000000,
+       "FreeRTOS heap overlaps the Life grid at buf0 + 256 MiB")

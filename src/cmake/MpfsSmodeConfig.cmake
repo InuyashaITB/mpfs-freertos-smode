@@ -14,6 +14,9 @@
 #   MpfsSmode::mpfs_smode    both libraries (whole-archive), include paths,
 #                            compile options, link options + linker script
 #   MpfsSmode::mpfs_drivers  the MSS drivers the libraries were built with
+#   MpfsSmode::freertos_tcp  FreeRTOS+TCP + the LiteEth network interface
+#                            (include/freertos_tcp, its FreeRTOSIPConfig.h is
+#                            LIBRARY-FIXED like FreeRTOSConfig.h)
 #
 # Variables:
 #   MPFS_SMODE_LINKER_SCRIPT  set before find_package() to link with your own
@@ -78,7 +81,7 @@ if(NOT TARGET MpfsSmode::mpfs_smode)
                      "${MPFS_SMODE_BUILT_LIBC_LINK_SPECS}" "${MPFS_SMODE_BOOT_DEFS}"
                      _mpfs_cflags _mpfs_ldflags)
 
-    foreach(_lib mpfs_smode_boot freertos_smode mpfs_drivers)
+    foreach(_lib mpfs_smode_boot freertos_smode mpfs_drivers freertos_tcp)
         add_library(MpfsSmode::${_lib} STATIC IMPORTED)
         set_target_properties(MpfsSmode::${_lib} PROPERTIES
             IMPORTED_LOCATION "${MpfsSmode_PREFIX}/lib/lib${_lib}.a")
@@ -90,6 +93,9 @@ if(NOT TARGET MpfsSmode::mpfs_smode)
             "${MpfsSmode_PREFIX}/include;${MpfsSmode_PREFIX}/include/freertos"
         INTERFACE_COMPILE_OPTIONS "${_mpfs_cflags}")
     set_target_properties(MpfsSmode::mpfs_drivers PROPERTIES
+        INTERFACE_LINK_LIBRARIES MpfsSmode::mpfs_smode_headers)
+    set_target_properties(MpfsSmode::freertos_tcp PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${MpfsSmode_PREFIX}/include/freertos_tcp"
         INTERFACE_LINK_LIBRARIES MpfsSmode::mpfs_smode_headers)
 
     # Whole-archive: weak defaults (the HAL's u54_1(), smode_diag.c's

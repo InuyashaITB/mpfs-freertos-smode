@@ -118,6 +118,7 @@ in the Renode log.
 |---|---|---|---|
 | `proto` | `SPI.ProtoSpiDevice`: example request/response protocol, data-ready line (replaced the Phase 1 loopback) | `spi1`, `DataReady` → PLIC 119 (F2M_1) | 4 |
 | `eth` | `Network.LiteX_Ethernet` (built in): LiteEth soft MAC | fabric FIC3 `0x4000_0000`, IRQ → PLIC 120 (F2M_2) | 5a |
+| `ethphy` | `Network.EthernetPhysicalLayer` (built in): PHY, IDs `0022:1561`, link up | `eth` MDIO address 1 | 5b |
 | `flash` | `SPI.NorFlash`: 16 MiB serial NOR, JEDEC ID `EF 40 18` | `spi0` | 2 |
 | `i2c0` | `I2C.MpfsI2c`: MSS I2C controller, **replaces** the built-in `MPFS_I2C` | `sysbus` `0x2010A000`, PLIC 58 | 3 |
 | `eeprom` | `I2C.I2cEeprom`: AT24C256-like, 32 KiB, 64-byte pages | `i2c0` address `0x50` | 3 |
@@ -130,7 +131,7 @@ gigapage 1 (`0x4000_0000`–`0x7FFF_FFFF`, RW) for it.
 | Region | Address | Contents |
 |---|---|---|
 | CSRs | `0x4000_0000` | Old LiteX layout: 8-bit subregisters every 4 bytes, MSB first |
-| MDIO | `0x4000_1000` | Bit-banged PHY interface (no PHY attached yet: Phase 5b) |
+| MDIO | `0x4000_1000` | Bit-banged PHY interface: W register +0x4 (bit 0 MDC, bit 1 OE, bit 2 MDIO out), R register +0x8 (bit 0 MDIO in); `ethphy` at address 1 |
 | Buffers | `0x4001_0000` | 2 RX ("writer") slots, then 2 TX ("reader") slots, 0x800 bytes each, 32-bit accesses |
 
 * **CSRs:**
@@ -143,20 +144,28 @@ gigapage 1 (`0x4000_0000`–`0x7FFF_FFFF`, RW) for it.
   * The received length includes the FCS plus `len % 60` extra zero bytes.
     That is a padding bug, so take the frame length from the payload.
   * There are only two RX slots: a frame arriving while both are full is
-    dropped (with a warning).
+    dropped ("There are no empty write slots"). In the TCP echo this happens
+    about once per run, and TCP retransmits.
+  * The MDIO model decodes the command word LSB first, but returns read data
+    MSB first, one bit after each rising MDC edge following the turnaround.
+    That matches a standard clause 22 read. Writes reach the PHY
+    bit-reversed (model bug); the driver only reads.
   * Frames are sent with the FCS appended; send at least 60 bytes.
 * **The switch** (`emulation CreateSwitch`) delivers a unicast frame only to
   the interface whose `MAC` matches the destination, and broadcasts to all.
   So the model's MAC must equal the firmware's: `sysbus.eth MAC
   "02:4d:50:46:53:00"` in the launcher, and per board in `run-demo.resc`.
   The repl cannot set it.
-* **Firmware:** `examples/freertos-demo/liteeth.c` and the raw-frame test in
-  `periph_selftest.c`:
-  * Each board broadcasts HELLO frames (EtherType 0x88B5) and answers a
-    peer's HELLO with a unicast ACK.
-  * Result: `[S] ETH: raw frames with board <n>: PASS`.
-  * A single board, as with the SoftConsole launcher, reports `no peer
-    answered (single board?)` after 3 s, which is not a failure.
+* **Firmware:** FreeRTOS+TCP in `libfreertos_tcp` (`src/freertos_tcp/`:
+  `liteeth.c` and `NetworkInterface_LiteEth.c`) and the demo's `net_demo.c`.
+  * Each board, with IP `192.168.10.<10 + id>`, runs a TCP echo server on
+    port 7. A client pings the other board, then sends it 4 KiB over TCP and
+    checks the echo.
+  * Results on both boards: `[S] NET: ping board <n>: PASS` and
+    `[S] NET: TCP echo with board <n>: PASS`.
+  * A single board, as with the SoftConsole launcher, reports `no reply from
+    board <n> (single board?)` after about 5 s, which is not a failure.
+  * Phase 5a's raw-frame test is gone: the stack owns the MAC now.
 
 ## Protocol device (`spi1.proto`, `models/ProtoSpiDevice.cs`)
 

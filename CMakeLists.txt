@@ -25,6 +25,8 @@ project(mpfs_freertos_smode LANGUAGES C ASM)
 # Makefile does (relative to src/).
 set(FREERTOS_CONFIG_DIR "../examples/freertos-demo" CACHE PATH
     "Directory with the FreeRTOSConfig.h compiled into libfreertos_smode")
+set(FREERTOS_IP_CONFIG_DIR "../examples/freertos-demo" CACHE PATH
+    "Directory with the FreeRTOSIPConfig.h compiled into libfreertos_tcp")
 
 add_subdirectory(src)
 add_subdirectory(examples/freertos-demo)

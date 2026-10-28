@@ -120,7 +120,8 @@ MPFS_LDFLAGS := -march=$(MARCH) -mabi=lp64d -mcmodel=medany $(LIBC_SPECS) \
 # (FREERTOS_CONFIG_DIR, ...) are defined by src/Makefile.
 MPFS_SMODE_SETTINGS := CROSS_COMPILE BUILD_TYPE MARCH LIBC_SPECS LIBC_LINK_SPECS \
                        LOADED_BY_BOOTLOADER MPFS_HAL_FIRST_HART MPFS_HAL_LAST_HART \
-                       FREERTOS_CONFIG_DIR MPFS_BOARD_DIR MPFS_LINKER_SCRIPT MPFS_DRIVERS
+                       FREERTOS_CONFIG_DIR FREERTOS_IP_CONFIG_DIR MPFS_BOARD_DIR \
+                       MPFS_LINKER_SCRIPT MPFS_DRIVERS
 
 # $(call mpfs_differs,a,b): non-empty if the two values differ.
 mpfs_differs = $(subst $(strip $(1)),,$(strip $(2)))$(subst $(strip $(2)),,$(strip $(1)))

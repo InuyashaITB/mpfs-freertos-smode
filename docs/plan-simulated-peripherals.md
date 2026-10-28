@@ -258,7 +258,7 @@ boundaries.
 | 3 | §5 I2C EEPROM | EEPROM demo PASS. **Done**: `make sim` passes in Renode 1.13.1 and the SoftConsole run shows all EEPROM steps PASS (see "Phase 3 status") |
 | 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event. **Done**: `make sim` passes in Renode 1.13.1 and the SoftConsole run shows every protocol step PASS (see "Phase 4 status") |
 | 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames exchanged between the two simulated boards. **Implemented; two-board `make sim` passes in Renode 1.13.1** (see "Phase 5a status") |
-| 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo between board 0 and board 1 |
+| 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo between board 0 and board 1. **Implemented; two-board `make sim` passes in Renode 1.13.1** (see "Phase 5b status") |
 | 5c | *(optional)* `SocketBridge` model + user-mode host helper | Host helper answers ARP/ping from a board |
 | 6 | Docs (README, boot doc), Robot tests, LIBRARY-FIXED marking | Tests green; docs updated |
 
@@ -587,3 +587,56 @@ board 1: [S] ETH: board 1, MAC 02:4d:50:46:53:01, LiteEth at 0x40000000
     right), both report `FAIL (peer has our board id ...)`.
 - **Not in 5a:** the PHY / MDIO and link state. They come with the 5b
   NetworkInterface.
+
+## Phase 5b status
+
+**Implemented; the two-board `make sim` passes in Renode 1.13.1.** Both
+boards:
+
+```
+board 0: [S] NET: board 0, FreeRTOS+TCP on LiteEth, 192.168.10.10, peer 192.168.10.11
+         [S] NET: up: 192.168.10.10/24, MAC 02:4d:50:46:53:00, PHY id 0x00221561, link up
+         [S] NET: ping board 1: PASS (0 ms)
+         [S] NET: echo server: client 192.168.10.11 done, 4096 bytes echoed
+         [S] NET: TCP echo with board 1: PASS (4096 bytes, 16 ms; MAC tx 24, rx 24, dropped 0)
+board 1: the same, with the ids swapped
+```
+
+- **New library `libfreertos_tcp.a`** (make and CMake;
+  `MPFS_SMODE_TCP_LIBS`, `MpfsSmode::freertos_tcp`):
+  - FreeRTOS+TCP **V4.4.2**, vendored unmodified as a subset in
+    `src/middleware/FreeRTOS-Plus-TCP` (kernel untouched): IPv4,
+    `BufferAllocation_2`.
+  - The LiteEth network interface in `src/freertos_tcp/`:
+    - `liteeth.c` moved there from the demo, with a split receive API and
+      bit-banged MDIO;
+    - `NetworkInterface_LiteEth.c`: a receive task woken by the PLIC
+      interrupt through `liteeth_netif_irq_handler()` (disable /
+      re-enable), output from the IP task, PHY ID and link via MDIO, and the
+      link assumed up without a PHY.
+  - `FreeRTOSIPConfig.h` comes from `FREERTOS_IP_CONFIG_DIR` (default
+    `src/freertos_tcp/config`; the root build passes the demo's). It is
+    LIBRARY-FIXED, installed in `include/freertos_tcp/` and recorded in
+    `build_config` like `FreeRTOSConfig.h`.
+- **Heap in DDR:** 4 MiB, `configAPPLICATION_ALLOCATED_HEAP`, with `ucHeap`
+  a plain linker symbol in `ddr_buffers.ld` at buf0 + 16 MiB.
+  - It is not a section, because Renode 1.13's LoadELF cannot take a
+    NOLOAD section in DDR.
+  - It is within ±2 GiB of the code, which `-mcmodel=medany` needs.
+  - L2LIM is now about 245 of 255 KiB (Debug build).
+- **Renode:** `ethphy` (`EthernetPhysicalLayer`, IDs `0022:1561`) at MDIO
+  address 1. The MDIO bit order was worked out from 1.13's `BitBangHelper`,
+  and the PHY ID reads back correctly. The two-RX-slot limit drops about one
+  frame per run, which TCP recovers.
+- **Demo:** `net_demo.c` replaces the 5a raw-frame test:
+  - static IP from the strap;
+  - an echo server on port 7 and a client (ping, then a 4 KiB TCP echo) on
+    every board, in both directions;
+  - `expected-uart.txt` requires both NET lines on both boards.
+- **Builds checked:**
+  - make and CMake library builds;
+  - the demo against both install trees with both build systems.
+- **Negative check:** with board 1 off the switch, board 0 keeps pinging
+  (10 × 500 ms, longer than the 3 s run) and `make sim` fails on the missing
+  NET lines.
+- **Not done (5c, optional):** host access through a `SocketBridge` model.

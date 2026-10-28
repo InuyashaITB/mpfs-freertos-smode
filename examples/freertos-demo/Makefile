@@ -26,7 +26,7 @@ APP            := freertos-demo
 
 include $(MPFS_SMODE_DIR)/mpfs_smode.mk
 
-SRCS := app_main.c m_prehook.c other_harts.c ddr_buffers.c periph_selftest.c spi_xfer.c spi_flash.c proto_dev.c i2c_eeprom.c liteeth.c
+SRCS := app_main.c m_prehook.c other_harts.c ddr_buffers.c periph_selftest.c spi_xfer.c spi_flash.c proto_dev.c i2c_eeprom.c net_demo.c
 
 # Implicit linker scripts added to the library's mpfs-lim-sv39.ld: the demo's
 # layout of the DDR window (g_ddr_buffer_0..2).
@@ -47,9 +47,9 @@ $(OBJ_DIR)/%.o: $(APP_DIR)/%.c $(MPFS_SMODE_CONFIG)
 	@mkdir -p $(@D)
 	$(Q)$(CC) $(MPFS_SMODE_CFLAGS) -Wall -Wextra -MMD -MP -c $< -o $@
 
-$(ELF): $(OBJS) $(APP_LDSCRIPTS) $(MPFS_SMODE_DEPS)
+$(ELF): $(OBJS) $(APP_LDSCRIPTS) $(MPFS_SMODE_DEPS) $(MPFS_SMODE_TCP_LIBS)
 	@echo "LD  $@"
-	$(Q)$(CC) $(MPFS_SMODE_LDFLAGS) -Wl,-Map=$(OUT_DIR)/$(APP).map $(OBJS) $(APP_LDSCRIPTS) $(MPFS_SMODE_LIBS) -o $@
+	$(Q)$(CC) $(MPFS_SMODE_LDFLAGS) -Wl,-Map=$(OUT_DIR)/$(APP).map $(OBJS) $(APP_LDSCRIPTS) $(MPFS_SMODE_TCP_LIBS) $(MPFS_SMODE_LIBS) -o $@
 	$(Q)$(SIZE) --format=sysv --radix=16 $@
 
 $(OUT_DIR)/$(APP).hex: $(ELF)

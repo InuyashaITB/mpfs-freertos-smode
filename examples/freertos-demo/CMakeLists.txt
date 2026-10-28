@@ -34,7 +34,7 @@ add_executable(freertos-demo
     spi_flash.c
     proto_dev.c
     i2c_eeprom.c
-    liteeth.c)
+    net_demo.c)
 
 set_target_properties(freertos-demo PROPERTIES SUFFIX ".elf")
 target_compile_options(freertos-demo PRIVATE -Wall -Wextra)
@@ -43,6 +43,7 @@ target_compile_options(freertos-demo PRIVATE -Wall -Wextra)
 # script, added to the library's mpfs-lim-sv39.ld after the objects.
 target_link_libraries(freertos-demo PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/ddr_buffers.ld"
+    MpfsSmode::freertos_tcp
     MpfsSmode::mpfs_smode
     MpfsSmode::mpfs_drivers)
 set_property(TARGET freertos-demo APPEND PROPERTY
