@@ -38,21 +38,43 @@ add_subdirectory(examples/freertos-demo)
 # run Renode in the project root, and need no shell (renode/cmake/*.cmake),
 # so they also work from a plain Windows prompt.
 #
-#   cmake -B build-cmake -DRENODE=<Renode executable> [-DPYTHON=<python3>]
-#         [-DRENODE_TEST=<renode-test>]
-#   cmake --build build-cmake
-#   ctest --test-dir build-cmake --output-on-failure    # -R sim, -L host, ...
+#   cmake --preset debug             (or -B <dir> -DRENODE=... -DPYTHON=...)
+#   cmake --build --preset debug
+#   ctest --preset debug             # -R sim, -L host, ...
 #
-# A test is only registered when its tool is set. Each run's outputs go to
-# <build>/sim, <build>/sim-host and <build>/robot. The same runs are also
-# build targets: cmake --build build-cmake --target sim (sim_host, robot).
+# Every test is always registered, so IDEs (VS Code's Testing view) list
+# them all. One whose tool is not configured reports "Skipped" and names the
+# missing setting. Tools: RENODE (found automatically in SoftConsole's usual
+# install folders), PYTHON (found on PATH), RENODE_TEST. Machine-specific
+# paths belong in CMakeUserPresets.json (see CMakeUserPresets.json.example).
+#
+# The Renode tests need the ELF: the build_demo test builds it first (a CTest
+# fixture), so running a single test from an IDE never uses a stale image.
+# Each run's outputs go to <build>/sim, <build>/sim_host and <build>/robot.
+# The runs are also build targets: cmake --build <dir> --target sim
+# (sim_host, robot).
 #-------------------------------------------------------------------------------
 enable_testing()
 
-set(RENODE "" CACHE FILEPATH "Renode executable, for the sim / sim_host tests")
+# Renode: given, or found next to a SoftConsole install (Windows:
+# C:/Microchip/SoftConsole-*/renode[/bin]/Renode.exe), or on PATH.
+if(NOT RENODE)
+    file(GLOB _softconsole_renode_dirs LIST_DIRECTORIES true
+        "C:/Microchip/SoftConsole-*/renode" "C:/Microchip/SoftConsole-*/renode/bin"
+        "/opt/microchip/SoftConsole-*/renode" "/opt/microchip/SoftConsole-*/renode/bin"
+        "$ENV{HOME}/Microchip/SoftConsole-*/renode" "$ENV{HOME}/Microchip/SoftConsole-*/renode/bin")
+    find_program(_renode_found NAMES Renode renode HINTS ${_softconsole_renode_dirs} NO_CACHE)
+    if(_renode_found)
+        set(_renode_default "${_renode_found}")
+    else()
+        set(_renode_default "")
+    endif()
+endif()
+set(RENODE "${_renode_default}" CACHE FILEPATH "Renode executable, for the sim / sim_host tests")
 set(RENODE_FLAGS "--disable-xwt;--console" CACHE STRING
     "Renode options for headless runs (on Windows try --disable-xwt alone if --console is rejected)")
-set(RENODE_TEST "" CACHE FILEPATH "Renode's renode-test script, for the robot test")
+set(RENODE_TEST "" CACHE FILEPATH
+    "Renode's renode-test script, for the robot test (Python with robotframework==4.0.1 must be on PATH)")
 set(SIM_TIME "3" CACHE STRING "Emulated seconds after the first one")
 if(NOT DEFINED PYTHON)
     find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -79,8 +101,30 @@ add_test(NAME check_uart_selftest_fail
 set_tests_properties(check_uart_selftest_fail PROPERTIES WILL_FAIL TRUE)
 set_tests_properties(check_uart_selftest check_uart_selftest_fail PROPERTIES LABELS "check")
 
+# Builds the demo before any Renode test that needs it (fixture "demo_elf").
+get_property(_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(_multi_config)
+    set(_config_arg --config $<CONFIG>)
+else()
+    set(_config_arg "")
+endif()
+add_test(NAME build_demo
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target freertos-demo ${_config_arg})
+set_tests_properties(build_demo PROPERTIES FIXTURES_SETUP demo_elf LABELS "build" TIMEOUT 900)
+
+# A test whose tool is missing: registered anyway, reports "Skipped".
+function(mpfs_skipped_test name reason labels)
+    add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -E echo "SKIPPED: ${reason}")
+    set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" LABELS "${labels}")
+endfunction()
+
+set(_renode_test_props
+    TIMEOUT 900
+    RESOURCE_LOCK renode            # fixed UDP ports, CPU-heavy
+    FIXTURES_REQUIRED demo_elf)
+
 # One Renode run + checks (renode/cmake/RunSim.cmake), as a test and a target.
-function(mpfs_sim_run name script)
+function(mpfs_sim_run name script labels)
     string(REPLACE ";" "|" _flags "${RENODE_FLAGS}")
     set(_cmd ${CMAKE_COMMAND}
         -DRENODE=${RENODE}
@@ -93,10 +137,7 @@ function(mpfs_sim_run name script)
         ${ARGN}
         -P ${_renode_dir}/cmake/RunSim.cmake)
     add_test(NAME ${name} COMMAND ${_cmd} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-    set_tests_properties(${name} PROPERTIES
-        TIMEOUT 900
-        RESOURCE_LOCK renode            # fixed UDP ports, CPU-heavy
-        LABELS "renode;network")
+    set_tests_properties(${name} PROPERTIES ${_renode_test_props} LABELS "${labels}")
     add_custom_target(${name} COMMAND ${_cmd}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         USES_TERMINAL
@@ -104,16 +145,18 @@ function(mpfs_sim_run name script)
     add_dependencies(${name} freertos-demo)
 endfunction()
 
+set(_need_renode "set RENODE to the Renode executable (CMakeUserPresets.json, or -DRENODE=...)")
 if(RENODE)
-    mpfs_sim_run(sim run-demo)
-    if(PYTHON)
-        mpfs_sim_run(sim_host run-host -DPYTHON=${PYTHON})
-        set_property(TEST sim_host APPEND PROPERTY LABELS host)
-    else()
-        message(STATUS "Renode tests: no Python 3 found, so no sim_host test (set -DPYTHON=...)")
-    endif()
+    mpfs_sim_run(sim run-demo "renode;network")
 else()
-    message(STATUS "Renode tests: set -DRENODE=<Renode executable> to add the sim / sim_host tests")
+    mpfs_skipped_test(sim "${_need_renode}" "renode;network")
+endif()
+if(RENODE AND PYTHON)
+    mpfs_sim_run(sim_host run-host "renode;network;host" -DPYTHON=${PYTHON})
+elseif(NOT RENODE)
+    mpfs_skipped_test(sim_host "${_need_renode}" "renode;network;host")
+else()
+    mpfs_skipped_test(sim_host "set PYTHON to a Python 3 interpreter" "renode;network;host")
 endif()
 
 if(RENODE_TEST)
@@ -122,13 +165,18 @@ if(RENODE_TEST)
         --variable ELF:${_elf}
         --variable OUT:${CMAKE_BINARY_DIR}/robot)
     add_test(NAME robot COMMAND ${_robot_cmd} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-    set_tests_properties(robot PROPERTIES TIMEOUT 900 RESOURCE_LOCK renode LABELS "renode;robot")
+    set_tests_properties(robot PROPERTIES ${_renode_test_props} LABELS "renode;robot")
     add_custom_target(robot COMMAND ${_robot_cmd}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         USES_TERMINAL
         VERBATIM)
     add_dependencies(robot freertos-demo)
 else()
-    message(STATUS "Renode tests: set -DRENODE_TEST=<Renode's renode-test> to add the robot test")
+    mpfs_skipped_test(robot
+        "set RENODE_TEST to Renode's renode-test script (CMakeUserPresets.json, or -DRENODE_TEST=...)"
+        "renode;robot")
 endif()
 
+message(STATUS "Renode tests: RENODE=${RENODE}")
+message(STATUS "Renode tests: PYTHON=${PYTHON}")
+message(STATUS "Renode tests: RENODE_TEST=${RENODE_TEST}")

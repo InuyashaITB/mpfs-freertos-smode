@@ -197,6 +197,33 @@ SoftConsole's `build_tools\bin` first on PATH.
 | `examples/freertos-demo/CMakeLists.txt` | **Application**: uses only `MpfsSmode::` targets (`find_package(MpfsSmode)` when built on its own) |
 | `CMakeLists.txt` (root) | **Orchestrator**: adds both, builds the library with the demo's `FreeRTOSConfig.h` |
 
+**Presets** (`CMakePresets.json`, used by VS Code's CMake Tools and by the
+command line):
+
+| Preset | Configure, build, test |
+|---|---|
+| `debug` / `release` | Ninja, the project's toolchain file, `build-cmake/<preset>/` |
+| `debug-quick` (test only) | only the checker tests (no Renode) |
+| `local` (yours) | copy `CMakeUserPresets.json.example` to `CMakeUserPresets.json` (git-ignored) and set this machine's paths: `RENODE`, `PYTHON`, `RENODE_TEST`, and PATH for Robot's Python. You can also change the generator there, e.g. `"generator": "Unix Makefiles"` with SoftConsole's `build_tools\bin` on PATH if you have no Ninja |
+
+```sh
+cmake --preset local && cmake --build --preset local && ctest --preset local
+```
+
+In VS Code, select the configure, build and test presets in the CMake Tools
+side bar. The Testing view then lists every test:
+- `check_uart_selftest`, `check_uart_selftest_fail`;
+- `build_demo`;
+- `sim`, `sim_host`, `robot`.
+
+A Renode test whose tool is not set shows as **Skipped**, and its output
+names the missing setting. `build_demo` builds the ELF first whenever a
+Renode test runs, so running one test from the Testing view never uses a
+stale image. Renode itself is found automatically in
+`C:/Microchip/SoftConsole-*/renode[/bin]`.
+
+Without presets:
+
 ```sh
 cmake -B build-cmake [-DCMAKE_BUILD_TYPE=Release]     # root: library + demo
 cmake --build build-cmake                            # -> build-cmake/examples/freertos-demo/freertos-demo.elf
@@ -674,20 +701,20 @@ make robot RENODE_TEST=<Renode's renode-test>       # Robot Framework tests
   `psutil`, `pyyaml`).
 
 **The same with CMake / CTest.** No shell or busybox is needed, so this
-works from a plain Windows prompt:
+works from a plain Windows prompt and from VS Code's Testing view. With the
+presets (see "Building with CMake"):
 
 ```sh
-cmake -B build-cmake -DRENODE=<Renode executable> [-DPYTHON=<python3>] [-DRENODE_TEST=<renode-test>]
-cmake --build build-cmake
-ctest --test-dir build-cmake --output-on-failure      # or -R sim, -L host, -L robot
+cmake --preset local && ctest --preset local          # or add -R sim, -L host, -L robot
 ```
 
-| CTest test | Like | Registered when |
+| CTest test | Like | Runs when (otherwise reported as Skipped) |
 |---|---|---|
 | `check_uart_selftest`, `check_uart_selftest_fail` | — (the checker itself, on fixed logs) | always |
-| `sim` | `make sim` | `RENODE` is set |
-| `sim_host` | `make sim-host` | `RENODE` and `PYTHON` are set (Python 3 is found automatically) |
-| `robot` | `make robot` | `RENODE_TEST` is set |
+| `build_demo` | `make` | always; a set-up step (fixture) of every Renode test |
+| `sim` | `make sim` | `RENODE` is set or found (SoftConsole's `renode` folder) |
+| `sim_host` | `make sim-host` | `RENODE` and `PYTHON` (found on PATH) |
+| `robot` | `make robot` | `RENODE_TEST` is set, and Python with robotframework 4.0.1 is on PATH |
 
 * **Shared files:** the tests use the same Renode scripts and expected-line
   files as make. The checks are CMake scripts: `renode/cmake/RunSim.cmake`

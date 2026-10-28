@@ -139,10 +139,25 @@ target. They need no shell: `cmake/RunSim.cmake` and
 `cmake/CheckUart.cmake` replace the Makefile's `sh` parts.
 
 ```
-cmake -B build-cmake -DRENODE=C:/.../Renode.exe [-DPYTHON=py] [-DRENODE_TEST=C:/.../renode-test]
-cmake --build build-cmake
-ctest --test-dir build-cmake --output-on-failure
+cmake --preset local                  # CMakeUserPresets.json: RENODE, PYTHON, RENODE_TEST
+cmake --build --preset local
+ctest --preset local
 ```
+
+or without presets: `cmake -B build-cmake -DRENODE=C:/.../Renode.exe
+[-DPYTHON=py] [-DRENODE_TEST=C:/.../renode-test]`, then `ctest --test-dir
+build-cmake --output-on-failure`.
+
+**Visibility in IDEs.** Every test is always registered, so VS Code's
+Testing view lists them all:
+- **A missing tool:** the test reports **Skipped**
+  (`SKIP_REGULAR_EXPRESSION`) and its output names the missing setting.
+- **Finding Renode:** `RENODE` defaults to a Renode found in
+  `C:/Microchip/SoftConsole-*/renode[/bin]` (or the same under
+  `/opt/microchip` or `~/Microchip`) or on PATH.
+- **Building first:** `build_demo` builds the ELF and is the CTest fixture
+  `demo_elf`, which every Renode test requires. So `ctest -R sim`, or one
+  click in the Testing view, rebuilds a stale ELF first.
 
 How the CMake runs differ from make's, and why:
 
@@ -164,7 +179,12 @@ How the CMake runs differ from make's, and why:
   variables (`--variable ELF:... --variable OUT:...`). Python with
   robotframework must be first on PATH when `ctest` runs.
 
-Tested on Linux with Renode 1.13.1: all 5 tests pass in about 2.5 minutes.
+Tested on Linux with Renode 1.13.1:
+- all 6 tests pass in about 2.5 minutes;
+- without any tool, the 3 Renode tests are reported as Skipped and the rest
+  pass;
+- Renode is found in a SoftConsole-style folder.
+
 
 ## Robot Framework tests: `make robot`
 

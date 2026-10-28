@@ -12,3 +12,6 @@
 # Build output and default install prefix (see Makefile)
 build*/
 /dist/
+
+# CMake presets of this machine (see CMakeUserPresets.json.example)
+/CMakeUserPresets.json

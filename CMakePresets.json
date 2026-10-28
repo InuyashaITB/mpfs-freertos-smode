@@ -1,0 +1,55 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "description": "Common settings: the project's RISC-V toolchain file, Ninja, one build folder per preset.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-cmake/${presetName}",
+      "toolchainFile": "${sourceDir}/src/cmake/riscv64-unknown-elf.cmake"
+    },
+    {
+      "name": "debug",
+      "inherits": "base",
+      "displayName": "Debug",
+      "description": "Debug build (-O0 -g3). Renode tests use RENODE / PYTHON / RENODE_TEST if found or set (CMakeUserPresets.json).",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Release",
+      "description": "Release build (-Os -g).",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "debug", "displayName": "Debug" },
+    { "name": "release", "configurePreset": "release", "displayName": "Release" }
+  ],
+  "testPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "displayName": "Debug: all tests",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "debug-quick",
+      "configurePreset": "debug",
+      "displayName": "Debug: without Renode (checker tests only)",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "check" } }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "displayName": "Release: all tests",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    }
+  ]
+}
