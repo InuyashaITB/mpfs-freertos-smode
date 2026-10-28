@@ -177,8 +177,8 @@ uint8_t fabric_f2h_2_plic_IRQHandler(void) { return liteeth_netif_irq_handler();
 | File | What |
 |---|---|
 | `renode/mpfs-sim-peripherals.repl` | `eth: Network.LiteX_Ethernet @ { sysbus 0x40000000; …"buffer" at 0x40010000; …"phy" at 0x40001000 }`, `IRQ -> plic@120`; `ethphy: Network.EthernetPhysicalLayer @ eth 1` with `Id1: 0x0022`, `Id2: 0x1561` |
-| Debug launcher, `renode/boards.resc` | `sysbus.eth MAC "02:4d:50:46:53:<id>"` (a repl cannot set a `MACAddress`) |
-| `renode/boards.resc` | Two boards (`board0`, `board1`), same ELF, on `emulation CreateSwitch "sw"` (`connector Connect sysbus.eth sw`); board 1 gets the GPIO2_0 strap (`sysbus WriteDoubleWord 0x20122000 0x2` to make it an input, then `sysbus.gpio2 OnGPIO 0 true`) |
+| Debug launcher, `renode/board-setup.resc` | `sysbus.eth MAC "02:4d:50:46:53:<id>"` (a repl cannot set a `MACAddress`) |
+| `renode/board-setup.resc` (`$two_boards`) | Two boards (`board0`, `board1`), same ELF, on `emulation CreateSwitch "sw"` (`connector Connect sysbus.eth sw`); board 1 gets the GPIO2_0 strap (`sysbus WriteDoubleWord 0x20122000 0x2` to make it an input, then `sysbus.gpio2 OnGPIO 0 true`) |
 | `renode/expected-uart.txt` | Requires `NET: ping board` and `NET: TCP echo with board` on both boards |
 | `renode/models/SocketBridge.cs`, `renode/host-bridge.repl`, `renode/run-host.resc`, `renode/host_bridge.py` | The host bridge (section 4) |
 

@@ -689,6 +689,28 @@ debug in Renode too, copy the `cmake.debugConfig` block from
 `.vscode/settings.json.example` (its `miDebuggerPath` must be an absolute
 path).
 
+**Both boards.** The compound **Debug both boards** runs the two boards of
+`make sim` (`renode/debug-dual.resc`: same ELF, board1 strapped as id 1, both
+on the Ethernet switch, a UART window each) with one debug session per
+board, both stopped at `s_mode_main`. The Call Stack shows the two sessions,
+each with its five harts; the debug toolbar acts on the selected one, and
+stopping either ends both and stops Renode. Things to know:
+
+* The boards share one emulation clock. A board halted in the debugger holds
+  the other back (it runs at most a moment ahead), so continue both
+  sessions, and neither side's network retries time out while you are
+  stopped.
+* board0's session connects first and board1's 3 s later (task *Wait 3 s*):
+  Renode 1.13's GDB servers garble their replies when two gdbs connect at
+  the same moment (`unrecognized item "E9999" in "qSupported" response`).
+  Only board1's session sends `monitor start`, so both boards are under a
+  debugger before anything runs; a second `start` from the other session
+  upsets the GDB servers.
+* The two per-board configurations are hidden: they only work as the
+  compound. To debug one board while the other just runs, start
+  `renode -e "include @renode/debug-dual.resc"` by hand, attach one gdb, and
+  type `start` in the Renode monitor.
+
 The Renode task's terminal is the Renode monitor (`--console`): commands
 such as `sysbus.spi0.flash Programs` or `sysbus.spi1.proto InjectEvent 0x42`
 can be typed there while debugging, or from the Debug Console as

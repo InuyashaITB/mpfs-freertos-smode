@@ -165,7 +165,7 @@ attached?"), the test stops.
 | `renode/models/MpfsI2c.cs` | The I2C controller (custom C#), replacing the built-in `MPFS_I2C` on `i2c0` |
 | `renode/models/I2cEeprom.cs` | The EEPROM (custom C#) |
 | `renode/mpfs-sim-peripherals.repl` | `i2c0: I2C.MpfsI2c @ sysbus 0x2010A000` with `IRQ -> plic@58`, and `eeprom: I2C.I2cEeprom @ i2c0 0x50` |
-| Debug launcher, `renode/boards.resc` | Include both models, then `machine UnregisterFromParent sysbus.i2c0` **before** loading the repl, so the name and address are free |
+| Debug launcher, `renode/board-setup.resc` | Include both models, then `machine UnregisterFromParent sysbus.i2c0` **before** loading the repl, so the name and address are free |
 
 `i2c1` keeps Renode's built-in model; the demo doesn't use it.
 

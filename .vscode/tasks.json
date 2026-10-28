@@ -45,9 +45,57 @@
             }
         },
         {
+            // Both boards of 'make sim' (renode/debug-dual.resc): GDB servers
+            // on 3333 (board0) and 3334 (board1), emulation paused. Started
+            // by the compound "Debug both boards".
+            "label": "Renode: start both boards for debugging",
+            "type": "process",
+            "command": "${config:mpfs.renode}",
+            "args": [
+                "--console",
+                "--plain",
+                "-e",
+                "$elf=@${command:cmake.launchTargetPath}; include @renode/debug-dual.resc"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "CMake: build freertos-demo",
+            "isBackground": true,
+            "presentation": { "reveal": "always", "panel": "dedicated" },
+            "problemMatcher": {
+                "owner": "renode",
+                "pattern": { "regexp": "^\\b$" },
+                "background": {
+                    "activeBegins": true,
+                    "beginsPattern": "Including script: .*debug-dual\\.resc",
+                    "endsPattern": "debug-dual\\.resc: GDB servers ready|There was an error executing command"
+                }
+            }
+        },
+        {
+            // Renode 1.13's GDB servers garble their replies when two gdbs
+            // connect at the same moment, so board1's connects later.
+            "label": "Wait 3 s",
+            "type": "process",
+            "command": "sleep",
+            "args": ["3"],
+            "windows": {
+                "command": "powershell",
+                "args": ["-NoProfile", "-Command", "Start-Sleep -Seconds 3"]
+            },
+            "presentation": { "reveal": "never" },
+            "problemMatcher": []
+        },
+        {
             "label": "Renode: stop",
             "type": "shell",
             "command": "echo ${input:terminateRenode}",
+            "presentation": { "reveal": "never" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Renode: stop both boards",
+            "type": "shell",
+            "command": "echo ${input:terminateRenodeBoth}",
             "presentation": { "reveal": "never" },
             "problemMatcher": []
         }
@@ -58,6 +106,12 @@
             "type": "command",
             "command": "workbench.action.tasks.terminate",
             "args": "Renode: start for debugging"
+        },
+        {
+            "id": "terminateRenodeBoth",
+            "type": "command",
+            "command": "workbench.action.tasks.terminate",
+            "args": "Renode: start both boards for debugging"
         }
     ]
 }

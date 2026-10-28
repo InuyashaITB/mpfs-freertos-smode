@@ -9,9 +9,11 @@ about running and testing.
 | `mpfs-ddr-38bit-cached-3gib.repl` | Adds 2 GiB of DDR at `0x10_4000_0000` for the Sv39 DDR window |
 | `mpfs-sim-peripherals.repl` | Simulated devices on the MSS SPI/I2C controllers and the fabric (LiteEth) |
 | `models/*.cs` | C# device models, compiled by Renode at run time |
-| `boards.resc` | Two boards, each loaded as the launcher loads one, on one Ethernet switch; defines `$run_and_report`. Shared by the next two |
+| `board-setup.resc` | Shared by every script here: the models, `$board` (one board as the launcher loads it) and `$two_boards` (board0 and board1 on the switch) |
+| `boards.resc` | The two boards with each MMUART1 to a file; defines `$run_and_report`. Shared by the next two |
 | `run-demo.resc` | `make sim`: runs the demo on both boards without a debugger, each board's MMUART1 to a file |
 | `debug.resc` | One board loaded as the launcher loads it, paused, with Renode's GDB server on port 3333: used by the VS Code debug configurations (see "Debugging in VS Code" in the top-level README) |
+| `debug-dual.resc` | Both boards, paused, GDB servers on 3333 (board0) and 3334 (board1): the VS Code compound "Debug both boards" |
 | `run-host.resc` | `make sim-host`: the same plus the host bridge (`host-bridge.repl`) |
 | `host-bridge.repl` | The `SocketBridge` model on board 0's bus (localhost UDP 37001 → 37000) |
 | `host_bridge.py` | Host side of the bridge: `192.168.10.1` on the simulated network (Python 3, standard library) |

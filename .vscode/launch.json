@@ -66,6 +66,69 @@
             "launchCompleteCommand": "None",
             // Without it cppdbg resumes the harts after connecting.
             "stopAtConnect": true
+        },
+        {
+            // Half of "Debug both boards" (below); not usable on its own.
+            // Connects first and does not start the emulation: board1's
+            // session does, so both boards run from reset under a debugger.
+            "name": "board0 (both boards)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.launchTargetPath}",
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "miDebuggerPath": "${config:mpfs.gdb}",
+            "setupCommands": [
+                { "text": "set $target_riscv=1" },
+                { "text": "set mem inaccessible-by-default off" },
+                { "text": "set riscv use-compressed-breakpoints on" }
+            ],
+            "miDebuggerServerAddress": "localhost:3333",
+            "postRemoteConnectCommands": [
+                { "text": "tbreak s_mode_main" }
+            ],
+            "launchCompleteCommand": "exec-continue",
+            "stopAtEntry": true,
+            "unknownBreakpointHandling": "stop",
+            "postDebugTask": "Renode: stop both boards",
+            "presentation": { "hidden": true }
+        },
+        {
+            // Half of "Debug both boards"; connects 3 s after board0.
+            "name": "board1 (both boards)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.launchTargetPath}",
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "miDebuggerPath": "${config:mpfs.gdb}",
+            "setupCommands": [
+                { "text": "set $target_riscv=1" },
+                { "text": "set mem inaccessible-by-default off" },
+                { "text": "set riscv use-compressed-breakpoints on" }
+            ],
+            "miDebuggerServerAddress": "localhost:3334",
+            "postRemoteConnectCommands": [
+                { "text": "monitor start" },
+                { "text": "tbreak s_mode_main" }
+            ],
+            "launchCompleteCommand": "exec-continue",
+            "stopAtEntry": true,
+            "unknownBreakpointHandling": "stop",
+            "preLaunchTask": "Wait 3 s",
+            "presentation": { "hidden": true }
+        }
+    ],
+    "compounds": [
+        {
+            // The two boards of 'make sim' (renode/debug-dual.resc), one
+            // debug session each, both stopped at s_mode_main. The boards
+            // share one emulation clock: a board halted in the debugger
+            // holds the other back too, so continue both.
+            "name": "Debug both boards",
+            "configurations": ["board0 (both boards)", "board1 (both boards)"],
+            "preLaunchTask": "Renode: start both boards for debugging",
+            "stopAll": true
         }
     ]
 }

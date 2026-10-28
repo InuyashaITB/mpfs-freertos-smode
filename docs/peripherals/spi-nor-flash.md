@@ -149,7 +149,7 @@ Expected output:
 |---|---|
 | `renode/models/NorFlash.cs` | The flash model (custom C#) |
 | `renode/mpfs-sim-peripherals.repl` | `flash: SPI.NorFlash @ spi0`: attaches it to the platform's built-in `spi0` (`SPI.MPFS_SPI` at `0x2010_8000`) |
-| Debug launcher, `renode/boards.resc` | `include @renode/models/NorFlash.cs` before the repl |
+| Debug launcher, `renode/board-setup.resc` | `include @renode/models/NorFlash.cs` before the repl |
 
 ### 2.2 The controller: Renode's built-in `MPFS_SPI` (not modified)
 

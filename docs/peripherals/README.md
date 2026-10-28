@@ -95,7 +95,8 @@ flowchart TD
 | `renode/mpfs-sim-peripherals.repl` | Attaches every device below to the platform (and replaces `i2c0`) |
 | `renode/models/*.cs` | The custom C# models, compiled by Renode when `include`d |
 | `mpfs-freertos-smode Renode All-harts Debug.launch` | SoftConsole: includes the models, unregisters the built-in `i2c0`, loads the repl, sets the MAC |
-| `renode/boards.resc`, `run-demo.resc`, `run-host.resc` | Headless two-board runs (`make sim`, `make sim-host`, CTest) |
+| `renode/board-setup.resc`, `boards.resc`, `run-demo.resc`, `run-host.resc` | Headless two-board runs (`make sim`, `make sim-host`, CTest) |
+| `renode/debug.resc`, `debug-dual.resc` | One or both boards waiting for gdb (VS Code debugging) |
 | `renode/expected-*.txt`, `check-uart.sh`, `cmake/*.cmake` | The PASS/FAIL checks |
 | `renode/tests/mpfs-demo.robot` | Robot Framework tests |
 
