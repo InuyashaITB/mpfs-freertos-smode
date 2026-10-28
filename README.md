@@ -171,6 +171,7 @@ application.
 | `FREERTOS_CONFIG_DIR` | `freertos_glue/config` (library's reference config); the root Makefile passes `../examples/freertos-demo` | `FreeRTOSConfig.h` that `libfreertos_smode` is built against (and installs). Relative to `src/` |
 | `MPFS_BOARD_DIR` | `boards/icicle-kit-es` | board configuration headers (relative to `src/`) |
 | `MPFS_LINKER_SCRIPT` | `<board>/platform_config/linker/mpfs-lim-sv39.ld` | installed with the libraries |
+| `FREERTOS_KERNEL_DIR` | `middleware/FreeRTOS-Kernel` (V11.3.2) | FreeRTOS-Kernel tree whose core sources and `include/` `libfreertos_smode` is built from; the S-mode port always comes from this repository. Tested back to V10.4.3 (202012 LTS): see `src/middleware/README.md`, "Older FreeRTOS kernels". Relative to `src/`, or absolute |
 | `FREERTOS_IP_CONFIG_DIR` | `freertos_tcp/config` (library's reference config); the root Makefile passes `../examples/freertos-demo` | `FreeRTOSIPConfig.h` that `libfreertos_tcp` is built against (and installs). Relative to `src/` |
 | `MPFS_DRIVERS` | `mss_mmuart mss_gpio mss_spi mss_i2c` | drivers in `libmpfs_drivers`. To use another MSS driver, copy its folder from Microchip's `platform` repository into `src/platform/drivers/mss/` and add it here |
 | `LOADED_BY_BOOTLOADER` | `0` | `0` standalone, `1` started by a bootloader (e.g. HSS); see [Boot modes](#boot-modes) |
@@ -243,6 +244,7 @@ cmake --build build-demo
 ```
 
 Cache variables: the same names as the make variables (`FREERTOS_CONFIG_DIR`,
+`FREERTOS_KERNEL_DIR`,
 `MPFS_BOARD_DIR`, `MPFS_LINKER_SCRIPT`, `MPFS_DRIVERS`, `LIBC_SPECS`,
 `LIBC_LINK_SPECS`, `MARCH`, `LOADED_BY_BOOTLOADER` (`ON`/`OFF`),
 `MPFS_HAL_FIRST_HART`/`MPFS_HAL_LAST_HART` (empty = follow

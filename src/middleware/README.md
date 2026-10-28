@@ -267,3 +267,78 @@ the standard SBI TIME extension.
    upstream renamed or added any.
 4. Build and confirm the counters described in the project README (tick,
    spin, blink, ext) still behave.
+
+## 6. Older FreeRTOS kernels
+
+The S-mode port and the library run on every FreeRTOS-Kernel release tested
+back to **V10.4.3, the kernel of the 202012 LTS**. The bundled V11.3.2 stays
+the default; another kernel tree is selected at library build time with
+`FREERTOS_KERNEL_DIR`.
+
+| Kernel | LTS line | Library | Demo (`make sim`, two boards) | Hello-world | Needs the config shims (below) |
+|---|---|---|---|---|---|
+| V11.3.2 (bundled) | | builds | passes | runs | no |
+| V11.2.0 | | builds | passes | runs | no |
+| V11.1.0 | 202406 LTS | builds | passes | runs | no |
+| V11.0.1 | | builds | passes | runs | no |
+| V10.6.2 | | builds | passes | runs | yes |
+| V10.5.1 | 202210 LTS | builds | passes | runs | yes |
+| V10.4.3 | 202012 LTS | builds | passes | runs | yes |
+
+Each row: the library built with the demo's configuration and the
+reference configuration, the demo run on both boards in Renode 1.13 and
+checked like `make sim` (self-tests, ping and TCP echo between the boards,
+FreeRTOS+TCP V4.4.2 included), and the hello-world from
+`docs/library-build-and-hello-world.md` run in Renode. Releases older than
+V10.4.3 were not tested.
+
+**Why it reaches that far.** The port is self-contained: the stack frame,
+critical nesting kept in the frame, the ISR stack, `xTaskReturnAddress`, the
+lazy FPU/VPU save and the SBI timer are all in `RISC-V-SMode/`, so it does
+not depend on when upstream's M-mode port gained them (`portContext.h` and
+in-frame critical nesting in V10.5, FPU/VPU in V11.3). Its interface to the
+kernel core is old and stable: the kernel calls `pxPortInitialiseStack()`,
+`xPortStartScheduler()` and `vPortEndScheduler()`; the port uses
+`pxCurrentTCB`, `vTaskSwitchContext()` and `xTaskIncrementTick()`. The
+library glue only uses `xTaskCreate()`, `vTaskStartScheduler()`, the yield
+macros and the stack-overflow and malloc-failed hooks.
+
+**The config shims.** Both `FreeRTOSConfig.h` files (the library's
+reference one and the demo's) bridge the three differences found:
+
+| Kernels | Problem without the shim | Shim |
+|---|---|---|
+| before V10.6 | `FreeRTOS.h` requires `configUSE_16_BIT_TICKS` and has no `TICK_TYPE_WIDTH_*`; from V10.6 on, defining both is an error | `configTICK_TYPE_WIDTH_IN_BITS` if `TICK_TYPE_WIDTH_64_BITS` is defined (V10.6 on defines it before including the config), else `configUSE_16_BIT_TICKS 0` |
+| before V11.0 | link error: `traceISR_EXIT` / `traceISR_EXIT_TO_SCHEDULER`, used by the port's `portYIELD_FROM_ISR()`, have no default | empty defaults, only if not defined |
+| before V11.0 | link error: `pdTICKS_TO_MS`, used by FreeRTOS+TCP V4 | V11's definition, only if not defined |
+
+An application's own `FreeRTOSConfig.h` needs the same lines to use a
+kernel older than V11.0 (copy the two blocks marked "Older kernels" and the
+tick-width block).
+
+Things that stay different on older kernels, by upstream design rather than
+the port:
+- **Event groups before V10.6** place their control bits as for a 32-bit
+  tick (`configUSE_16_BIT_TICKS 0`: bits 24 to 31), so use event bits 0 to
+  23, as with upstream's own RV64 port on those releases. From V10.6 on,
+  with 64-bit ticks, bits 0 to 55 are available.
+- **V11-only APIs** (for example `configKERNEL_PROVIDED_STATIC_MEMORY`,
+  `traceENTER_*` hooks, `configNUMBER_OF_CORES`) are not available to the
+  application; the library itself does not use them.
+
+**Building against another kernel.** Point `FREERTOS_KERNEL_DIR` at a
+FreeRTOS-Kernel tree (a release archive or a `git clone --branch <tag>` of
+FreeRTOS-Kernel): its core `.c` files, `include/` and
+`portable/MemMang/heap_4.c` are used, and the S-mode port always comes from
+this repository.
+
+```sh
+make libs FREERTOS_KERNEL_DIR=C:/FreeRTOS-Kernel-V11.1.0         # root: library + install tree
+make -C src FREERTOS_KERNEL_DIR=C:/FreeRTOS-Kernel-V10.5.1 install PREFIX=C:/mpfs-smode-k1051
+cmake --preset debug -DFREERTOS_KERNEL_DIR=C:/FreeRTOS-Kernel-V11.1.0
+```
+
+Relative paths are relative to `src/`. The setting is recorded in the
+install tree (`MPFS_SMODE_BUILT_FREERTOS_KERNEL_DIR`), and changing it
+rebuilds the libraries from scratch, like the other library settings; the
+installed `include/freertos/` then holds that kernel's headers.

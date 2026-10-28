@@ -29,6 +29,11 @@
 #   FREERTOS_CONFIG_DIR  FreeRTOSConfig.h compiled into libfreertos_smode and
 #                        installed with it. Default: freertos_glue/config,
 #                        the library's reference configuration
+#   FREERTOS_KERNEL_DIR  FreeRTOS-Kernel tree whose core sources, include/
+#                        and heap_4.c libfreertos_smode is built from.
+#                        Default: middleware/FreeRTOS-Kernel (V11.3.2). The
+#                        S-mode port always comes from the bundled tree; see
+#                        middleware/README.md, "Older FreeRTOS kernels"
 #   FREERTOS_IP_CONFIG_DIR  FreeRTOSIPConfig.h compiled into libfreertos_tcp
 #                        and installed with it. Default: freertos_tcp/config
 #   MPFS_BOARD_DIR       board configuration headers
@@ -38,6 +43,7 @@
 #   DIST_DIR             install tree           ../build/dist
 
 FREERTOS_CONFIG_DIR ?= freertos_glue/config
+FREERTOS_KERNEL_DIR ?= middleware/FreeRTOS-Kernel
 FREERTOS_IP_CONFIG_DIR ?= freertos_tcp/config
 MPFS_BOARD_DIR      ?= boards/icicle-kit-es
 MPFS_LINKER_SCRIPT  ?= $(MPFS_BOARD_DIR)/platform_config/linker/mpfs-lim-sv39.ld
@@ -49,6 +55,17 @@ include mk/toolchain.mk
 
 STAGE   := $(DIST_DIR)
 OBJ_DIR := $(OUT_DIR)/obj/$(BUILD_TYPE)
+
+# Check the paths first: a bad one must not wipe the previous build below.
+ifeq ($(wildcard $(FREERTOS_CONFIG_DIR)/FreeRTOSConfig.h),)
+  $(error FREERTOS_CONFIG_DIR ($(FREERTOS_CONFIG_DIR)) has no FreeRTOSConfig.h)
+endif
+ifneq ($(words $(wildcard $(FREERTOS_KERNEL_DIR)/tasks.c $(FREERTOS_KERNEL_DIR)/include/FreeRTOS.h)),2)
+  $(error FREERTOS_KERNEL_DIR ($(FREERTOS_KERNEL_DIR)) is not a FreeRTOS-Kernel tree (no tasks.c / include/FreeRTOS.h))
+endif
+ifeq ($(wildcard $(FREERTOS_IP_CONFIG_DIR)/FreeRTOSIPConfig.h),)
+  $(error FREERTOS_IP_CONFIG_DIR ($(FREERTOS_IP_CONFIG_DIR)) has no FreeRTOSIPConfig.h)
+endif
 
 # Objects only track sources and headers, not flags. The install tree records
 # the settings of the last build (mk/build_config.mk); when any of them
@@ -69,19 +86,14 @@ ifneq ($(MPFS_SETTINGS_CHANGED),)
   endif
 endif
 
-ifeq ($(wildcard $(FREERTOS_CONFIG_DIR)/FreeRTOSConfig.h),)
-  $(error FREERTOS_CONFIG_DIR ($(FREERTOS_CONFIG_DIR)) has no FreeRTOSConfig.h)
-endif
-ifeq ($(wildcard $(FREERTOS_IP_CONFIG_DIR)/FreeRTOSIPConfig.h),)
-  $(error FREERTOS_IP_CONFIG_DIR ($(FREERTOS_IP_CONFIG_DIR)) has no FreeRTOSIPConfig.h)
-endif
 
 # Recursive wildcard: $(call rwildcard,dir,*.c *.S)
 rwildcard = $(foreach d,$(wildcard $(1:=/*)),$(call rwildcard,$d,$2) $(filter $(subst *,%,$2),$d))
 
 PLATFORM := platform
-KERNEL   := middleware/FreeRTOS-Kernel
-PORT     := $(KERNEL)/portable/GCC/RISC-V-SMode
+# Kernel core from FREERTOS_KERNEL_DIR; the S-mode port is always the bundled one.
+KERNEL   := $(patsubst %/,%,$(FREERTOS_KERNEL_DIR))
+PORT     := middleware/FreeRTOS-Kernel/portable/GCC/RISC-V-SMode
 TCP      := middleware/FreeRTOS-Plus-TCP/source
 
 #-------------------------------------------------------------------------------
@@ -106,8 +118,8 @@ KERNEL_SRCS := $(KERNEL)/croutine.c \
                $(KERNEL)/stream_buffer.c \
                $(KERNEL)/tasks.c \
                $(KERNEL)/timers.c \
-               $(KERNEL)/portable/MemMang/heap_4.c \
-               $(PORT)/port.c \
+               $(KERNEL)/portable/MemMang/heap_4.c
+PORT_SRCS   := $(PORT)/port.c \
                $(PORT)/portASM.S
 
 # FreeRTOS+TCP: every stack source (FreeRTOSIPConfig.h decides what each one
@@ -124,7 +136,10 @@ $(foreach d,$(MPFS_DRIVERS),$(if $(wildcard $(PLATFORM)/drivers/mss/$d),,\
 obj = $(patsubst %,$(OBJ_DIR)/%.o,$(1))
 
 BOOT_OBJS     := $(call obj,$(HAL_SRCS) $(SMODE_SRCS))
-FREERTOS_OBJS := $(call obj,$(KERNEL_SRCS) $(GLUE_SRCS))
+# Kernel objects under obj/kernel/: FREERTOS_KERNEL_DIR may be absolute (or
+# a drive path on Windows), which cannot be appended to OBJ_DIR.
+KERNEL_OBJS   := $(patsubst $(KERNEL)/%,$(OBJ_DIR)/kernel/%.o,$(KERNEL_SRCS))
+FREERTOS_OBJS := $(KERNEL_OBJS) $(call obj,$(PORT_SRCS) $(GLUE_SRCS))
 DRIVER_OBJS   := $(call obj,$(DRIVER_SRCS))
 TCP_OBJS      := $(call obj,$(TCP_STACK_SRCS) $(TCP_NETIF_SRCS))
 ALL_OBJS      := $(BOOT_OBJS) $(FREERTOS_OBJS) $(DRIVER_OBJS) $(TCP_OBJS)
@@ -164,6 +179,11 @@ LIBS         := $(BOOT_LIB) $(FREERTOS_LIB) $(DRIVERS_LIB) $(TCP_LIB)
 all: stage
 
 $(OBJ_DIR)/%.c.o: %.c
+	@echo "CC  $<"
+	@mkdir -p $(@D)
+	$(Q)$(CC) $(MPFS_CFLAGS) $(EXTRA_CFLAGS) $(LIB_INCLUDES) -MMD -MP -c $< -o $@
+
+$(OBJ_DIR)/kernel/%.c.o: $(KERNEL)/%.c
 	@echo "CC  $<"
 	@mkdir -p $(@D)
 	$(Q)$(CC) $(MPFS_CFLAGS) $(EXTRA_CFLAGS) $(LIB_INCLUDES) -MMD -MP -c $< -o $@
