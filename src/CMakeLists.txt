@@ -38,6 +38,8 @@ mpfs_smode_default_march(_default_march)
 # Same variables as src/Makefile; relative paths are relative to src/.
 set(FREERTOS_CONFIG_DIR "freertos_glue/config" CACHE PATH
     "Directory with the FreeRTOSConfig.h compiled into libfreertos_smode (installed with it)")
+set(FREERTOS_KERNEL_DIR "middleware/FreeRTOS-Kernel" CACHE PATH
+    "FreeRTOS-Kernel tree whose core sources and include/ libfreertos_smode is built from (the S-mode port always comes from middleware/FreeRTOS-Kernel)")
 set(FREERTOS_IP_CONFIG_DIR "freertos_tcp/config" CACHE PATH
     "Directory with the FreeRTOSIPConfig.h compiled into libfreertos_tcp (installed with it)")
 set(MPFS_BOARD_DIR "boards/icicle-kit-es" CACHE PATH "Board configuration headers")
@@ -76,6 +78,7 @@ endif()
 
 set(SRC "${CMAKE_CURRENT_SOURCE_DIR}")
 get_filename_component(_config_dir "${FREERTOS_CONFIG_DIR}" ABSOLUTE BASE_DIR "${SRC}")
+get_filename_component(_kernel_dir "${FREERTOS_KERNEL_DIR}" ABSOLUTE BASE_DIR "${SRC}")
 get_filename_component(_ip_config_dir "${FREERTOS_IP_CONFIG_DIR}" ABSOLUTE BASE_DIR "${SRC}")
 get_filename_component(_board_dir  "${MPFS_BOARD_DIR}" ABSOLUTE BASE_DIR "${SRC}")
 if(MPFS_LINKER_SCRIPT)
@@ -86,13 +89,17 @@ endif()
 if(NOT EXISTS "${_config_dir}/FreeRTOSConfig.h")
     message(FATAL_ERROR "FREERTOS_CONFIG_DIR (${_config_dir}) has no FreeRTOSConfig.h")
 endif()
+if(NOT EXISTS "${_kernel_dir}/tasks.c" OR NOT EXISTS "${_kernel_dir}/include/FreeRTOS.h")
+    message(FATAL_ERROR "FREERTOS_KERNEL_DIR (${_kernel_dir}) is not a FreeRTOS-Kernel tree (no tasks.c / include/FreeRTOS.h)")
+endif()
 if(NOT EXISTS "${_ip_config_dir}/FreeRTOSIPConfig.h")
     message(FATAL_ERROR "FREERTOS_IP_CONFIG_DIR (${_ip_config_dir}) has no FreeRTOSIPConfig.h")
 endif()
 
 set(PLATFORM "${SRC}/platform")
-set(KERNEL   "${SRC}/middleware/FreeRTOS-Kernel")
-set(PORT     "${KERNEL}/portable/GCC/RISC-V-SMode")
+# Kernel core from FREERTOS_KERNEL_DIR; the S-mode port is always the bundled one.
+set(KERNEL   "${_kernel_dir}")
+set(PORT     "${SRC}/middleware/FreeRTOS-Kernel/portable/GCC/RISC-V-SMode")
 set(TCP      "${SRC}/middleware/FreeRTOS-Plus-TCP/source")
 
 mpfs_smode_boot_defs(${_boot} ${_first_hart} ${_last_hart} MPFS_BOOT_DEFS)
@@ -256,13 +263,15 @@ set(_cfg "${CMAKE_CURRENT_BINARY_DIR}/install-config")
 set(MPFS_SMODE_SETTINGS
     CROSS_COMPILE BUILD_TYPE MARCH LIBC_SPECS LIBC_LINK_SPECS
     LOADED_BY_BOOTLOADER MPFS_HAL_FIRST_HART MPFS_HAL_LAST_HART
-    FREERTOS_CONFIG_DIR FREERTOS_IP_CONFIG_DIR MPFS_BOARD_DIR MPFS_LINKER_SCRIPT MPFS_DRIVERS)
+    FREERTOS_CONFIG_DIR FREERTOS_IP_CONFIG_DIR MPFS_BOARD_DIR MPFS_LINKER_SCRIPT MPFS_DRIVERS
+    FREERTOS_KERNEL_DIR)
 set(_built_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 set(_built_LOADED_BY_BOOTLOADER "${_boot}")
 set(_built_MPFS_HAL_FIRST_HART "${_first_hart}")
 set(_built_MPFS_HAL_LAST_HART "${_last_hart}")
 set(_built_FREERTOS_CONFIG_DIR "${_config_dir}")
 set(_built_FREERTOS_IP_CONFIG_DIR "${_ip_config_dir}")
+set(_built_FREERTOS_KERNEL_DIR "${_kernel_dir}")
 set(_built_MPFS_BOARD_DIR "${_board_dir}")
 set(_built_MPFS_LINKER_SCRIPT "${_ldscript}")
 string(REPLACE ";" " " _built_MPFS_DRIVERS "${MPFS_DRIVERS}")
