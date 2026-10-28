@@ -631,10 +631,13 @@ never land inside it. That is the only time `spin` can block.
 ## Simulated peripherals (branch `sim-peripherals`)
 
 Renode models for devices on the MSS SPI/I2C controllers and in the fabric,
-drivers for them, self-tests in the demo, and headless test runs. The
-devices, their protocols and Renode 1.13's quirks are documented in
-`renode/README.md`; the design and phase history in
-`docs/plan-simulated-peripherals.md`.
+drivers for them, self-tests in the demo, and headless test runs. Where the
+details are:
+- **[docs/peripherals/](docs/peripherals/README.md):** one document per
+  peripheral: the C code that talks to it, the registers used, task and
+  interrupt flows, the Renode files and the custom C#;
+- **`renode/README.md`:** running and testing in Renode;
+- **`docs/plan-simulated-peripherals.md`:** the design and phase history.
 
 | Device | Where | Firmware | Self-test result line |
 |---|---|---|---|

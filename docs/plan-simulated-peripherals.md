@@ -729,3 +729,14 @@ target.
   - without `RENODE` only the checker tests are registered;
   - `make sim` / `make sim-host` are unchanged and still pass.
 - Details are in `renode/README.md` ("CMake / CTest").
+
+## Peripheral documentation
+
+One document per peripheral sample is in `docs/peripherals/`:
+- `spi-nor-flash.md`;
+- `spi-protocol-device.md`;
+- `i2c-eeprom.md` (with the `MpfsI2c` controller);
+- `ethernet-liteeth.md` (with FreeRTOS+TCP and the host bridge).
+
+Each covers the C code and the registers it uses, the task and interrupt
+flows, the Renode files, and the custom C# models.

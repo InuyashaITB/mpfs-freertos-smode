@@ -1,5 +1,9 @@
 # Renode files
 
+Per-device documentation (firmware, registers, flows and the models below)
+is in [`docs/peripherals/`](../docs/peripherals/README.md); this file is
+about running and testing.
+
 | File | What |
 |---|---|
 | `mpfs-ddr-38bit-cached-3gib.repl` | Adds 2 GiB of DDR at `0x10_4000_0000` for the Sv39 DDR window |
