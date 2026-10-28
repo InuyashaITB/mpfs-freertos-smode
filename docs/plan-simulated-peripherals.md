@@ -253,7 +253,7 @@ boundaries.
 | 0 | **Done.** In SoftConsole's Renode 1.13: `MPFS_SPI`, `MPFS_I2C`, addresses and PLIC lines confirmed; `LiteX_Ethernet` loads; `include @x.cs` compiles a probe model written against the 1.13 API (`Machine`), verified; no TAP (no admin) → user-mode networking | Findings folded into this plan |
 | 1 | §2: PLIC S-mode fix, drivers restored, Renode scaffolding (repl/resc/launcher), prehook clocks | Demo still runs; a trivial SPI loop transfer works from S-mode. **Done** (see "Phase 1 status") |
 | 2 | §3 SPI NOR flash | Flash demo PASS in Renode. **Implemented; passes in Renode 1.13.1** (see "Phase 2 status"); waiting for the SoftConsole run |
-| 3 | §5 I2C EEPROM | EEPROM demo PASS. **Implemented; `make sim` passes in Renode 1.13.1** (see "Phase 3 status"); waiting for the SoftConsole run |
+| 3 | §5 I2C EEPROM | EEPROM demo PASS. **Done**: `make sim` passes in Renode 1.13.1 and the SoftConsole run shows all EEPROM steps PASS (see "Phase 3 status") |
 | 4 | §4 custom SPI device | Protocol demo PASS, incl. NAK path and injected event |
 | 5a | §6 MAC: Sv39 fabric window, LiteEth model on FIC, bare driver (raw frame TX/RX through the switch) | Raw frames exchanged between the two simulated boards |
 | 5b | FreeRTOS+TCP library + NetworkInterface + memory move to DDR | Ping + TCP echo between board 0 and board 1 |
@@ -440,7 +440,8 @@ also the base for Phase 6's tests.
 
 ## Phase 3 status
 
-**Implemented; `make sim` passes in Renode 1.13.1** (5 expected lines).
+**Done.** `make sim` passes in Renode 1.13.1 (5 expected lines), and the
+SoftConsole launch shows the same lines.
 UART1:
 
 ```
