@@ -1,4 +1,58 @@
-# mpfs-freertos-smode
+# mpfs-freertos-smode — bare-bones branch
+
+> **Branch `bare-bones`: never merged into `main`.** The smallest possible
+> version of the S-mode port: one FreeRTOS task on U54_1 that counts
+> (`g_count`), no UART, no peripherals, no HAL. Everything below this box
+> describes `main` and is kept for reference only; this box describes what is
+> actually in this branch.
+>
+> ```
+> port/RISC-V-SMode/   the S-mode FreeRTOS port (unchanged from main); port/README-port.md
+> boot/                mpfs.h (own CSR/CLINT/SBI/PTE definitions), entry.S (M-mode
+>                      _start), m_shim.c + m_trap.S (delegation, PMP, SBI set_timer and
+>                      IPI, timer forwarding, mret to S-mode), s_start.S (Sv39 on with
+>                      the application's table, stvec, s_mode_main), linker.ld (L2LIM,
+>                      physical addresses)
+> app/                 main.c (the Sv39 root table, s_mode_main, the counting task),
+>                      FreeRTOSConfig.h
+> renode/hello.resc    run it in Renode as a bootloader would start it
+> Makefile, CMakeLists.txt, cmake/riscv64-unknown-elf.cmake
+> ```
+>
+> **FreeRTOS comes from outside the project:** `FREERTOS_KERNEL_DIR` (required)
+> points at a FreeRTOS-Kernel tree; `list.c`, `queue.c`, `tasks.c`,
+> `include/` and `portable/MemMang/heap_4.c` are built. Tested with V11.3.2
+> and V10.4.3 (202012 LTS).
+>
+> ```sh
+> make FREERTOS_KERNEL_DIR=C:/FreeRTOS-Kernel                      # -> build/hello.elf
+> cmake -S . -B build-cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/riscv64-unknown-elf.cmake \
+>       -DFREERTOS_KERNEL_DIR=C:/FreeRTOS-Kernel && cmake --build build-cmake
+> ```
+>
+> **Boot contract (no HAL, loaded by a bootloader):**
+> - The bootloader (e.g. an HSS bare-metal payload, not through OpenSBI) loads
+>   the ELF at its physical addresses (L2LIM, `0x0800_0000`) and starts
+>   U54_1 in M-mode at `_start` = `0x0800_0000` with `a0` = hart id. Clocks,
+>   L2 configured as LIM, and an unlocked PMP entry 0 are its job. Other harts
+>   that reach `_start` are parked.
+> - The image sets up M-mode itself (`boot/`) and drops to S-mode. M-mode then
+>   only serves SBI `set_timer` / `send_ipi` and forwards the machine timer
+>   interrupt as the S-mode tick. An unexpected trap is recorded in
+>   `g_m_fault` and the hart parks.
+> - **The application provides the Sv39 root page table**,
+>   `mpfs_sv39_root_table` (512 entries, 4 KiB aligned); the link fails
+>   without it. The image is linked at its physical addresses, so the table
+>   must map it and the CLINT `mtime` register 1:1. The hello-world's table is
+>   one 1 GiB gigapage at `0x0000_0000`.
+>
+> **Checking it:** in Renode, `renode -e "include @renode/hello.resc"`, then
+> `start`; `sysbus GetSymbolAddress "g_count"` and `sysbus ReadDoubleWord
+> <address>` show the count: 1000 after one emulated second, 2000 after two.
+> On hardware, read `g_count` with a debugger. Image size (Debug, GCC 13):
+> 12.3 KB of code, 29 KB of RAM (16 KiB heap, 4 KiB ISR stack, 4 KiB each for
+> the M-mode and S-mode boot stacks).
+
 A U54 RISCV FreeRTOS Port to work in S-Mode
 
 FreeRTOS (Kernel V11.3.2) running in **supervisor mode** on one PolarFire SoC

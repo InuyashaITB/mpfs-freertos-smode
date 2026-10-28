@@ -1,5 +1,0 @@
-# check_uart_selftest: lines CheckUart.cmake must find in uart-good.txt
-# (and miss in uart-fail.txt). The first one contains a semicolon.
-16 ms; MAC tx 24
-NET: TCP echo with board 1: PASS
-scheduler running

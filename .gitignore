@@ -1,20 +1,2 @@
-# SoftConsole build output (one folder per build configuration)
-/LIM-Debug*/
-/LIM-Release*/
-/DDR-Release*/
-/eNVM-Scratchpad-Release*/
-/Debug/
-/Release/
-
-# Eclipse per-user settings
-/.settings*/
-
-# Build output and default install prefix (see Makefile)
+# Build output
 build*/
-/dist/
-
-# CMake presets of this machine (see CMakeUserPresets.json.example)
-/CMakeUserPresets.json
-
-# VS Code settings of this machine (see .vscode/settings.json.example)
-/.vscode/settings.json

@@ -1,7 +1,0 @@
-# Lines 'make sim-host' requires in renode/host_bridge.py's report.
-
-# Phase 5c: the host pings both boards, and both boards ping the host
-host: ping 192.168.10.10: PASS
-host: ping 192.168.10.11: PASS
-host: ping from 192.168.10.10 answered
-host: ping from 192.168.10.11 answered

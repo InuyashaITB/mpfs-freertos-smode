@@ -1,3 +1,0 @@
-**** PolarFire SoC: FreeRTOS in S-mode on U54_1 ****
-[S] NET: TCP echo with board 1: PASS (4096 bytes, 16 ms; MAC tx 24, rx 24, dropped 0)
-[S] scheduler running. Press 1, 2 or 3 to raise GPIO2_30, GPIO2_31 or F2M_0 interrupts.

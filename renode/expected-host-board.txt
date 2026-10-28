@@ -1,5 +1,0 @@
-# Lines 'make sim-host' requires in both boards' MMUART1 output, in addition
-# to expected-uart.txt (renode/check-uart.sh).
-
-# Phase 5c: the board pings the host behind the SocketBridge
-NET: ping host 192.168.10.1: PASS

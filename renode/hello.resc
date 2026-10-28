@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MIT
+#
+# Runs build/hello.elf in Renode the way the bootloader starts it: the ELF
+# loaded at its physical addresses, the E51 and U54_2..4 held halted, U54_1
+# started in M-mode at _start with a0 = hart id. Start Renode in the project
+# root:
+#
+#   renode -e "include @renode/hello.resc"
+#
+# then 'start', and read the counter (address from the symbol table):
+#
+#   sysbus GetSymbolAddress "g_count"
+#   sysbus ReadQuadWord <that address>
+#
+# It goes up by one per tick (1000 per emulated second). A non-zero
+# g_m_fault (M-mode shim: unexpected trap) means the hart parked.
+
+$elf?=@build/hello.elf
+
+mach create "hello"
+machine LoadPlatformDescription @platforms/cpus/polarfire-soc.repl
+sysbus LoadELF $elf
+sysbus.e51 IsHalted true
+sysbus.u54_2 IsHalted true
+sysbus.u54_3 IsHalted true
+sysbus.u54_4 IsHalted true
+sysbus.u54_1 PC 0x08000000
+sysbus.u54_1 SetRegisterUnsafe 10 1
