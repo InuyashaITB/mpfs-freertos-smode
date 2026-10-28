@@ -228,7 +228,28 @@ flowchart LR
 
 Both boards run the same program. Each one's client pings the other, then
 connects to the other's echo server and sends 4 KiB
-(`tcp_echo()`, `net_demo.c:179`). Both sides print PASS:
+(`tcp_echo()`, `net_demo.c:179`).
+
+Nothing gives a board a role: both are equal peers, and each is client and
+server at once.
+
+- **Identity.** The only difference is the GPIO2_0 strap, read once in
+  `net_demo_start()`: it gives the board id (0 or 1), and from it the MAC
+  (`02:4d:50:46:53:<id>`), the IP (`192.168.10.<10+id>`) and the peer's IP
+  (`peer_ip()`: the other id). In Renode, `$two_boards` sets the strap on
+  board1 only; on hardware it would be a pin strap.
+- **ARP and ping replies.** FreeRTOS+TCP's IP task answers them on every
+  board, with no application code: ARP requests for its own address always,
+  and ICMP echo requests because `ipconfigREPLY_TO_INCOMING_PINGS` is 1 in
+  `FreeRTOSIPConfig.h`. The client's first ping makes its stack broadcast an
+  ARP request; the switch floods it, and the peer's stack replies.
+- **TCP echo.** Both boards start `vEchoServerTask` (port 7) and
+  `vClientTask`. board0's client talks to board1's server while board1's
+  client talks to board0's server, so each direction and each role is
+  tested in the one image. The switch (`sw`) is Renode's model, not a
+  board.
+
+Both sides print PASS:
 
 ```
 [S] NET: board 0, FreeRTOS+TCP on LiteEth, 192.168.10.10, peer 192.168.10.11
