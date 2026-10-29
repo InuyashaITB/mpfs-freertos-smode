@@ -1,2 +1,5 @@
 # Build output
 build*/
+
+# Machine-local CMake presets
+CMakeUserPresets.json

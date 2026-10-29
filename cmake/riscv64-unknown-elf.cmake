@@ -15,12 +15,22 @@ set(CMAKE_SYSTEM_PROCESSOR riscv64)
 
 set(CROSS_COMPILE "riscv64-unknown-elf-" CACHE STRING "RISC-V GCC tool prefix")
 
-set(CMAKE_C_COMPILER   "${CROSS_COMPILE}gcc")
-set(CMAKE_ASM_COMPILER "${CROSS_COMPILE}gcc")
-set(CMAKE_AR           "${CROSS_COMPILE}ar"      CACHE FILEPATH "")
-set(CMAKE_RANLIB       "${CROSS_COMPILE}ranlib"  CACHE FILEPATH "")
-set(CMAKE_OBJCOPY      "${CROSS_COMPILE}objcopy" CACHE FILEPATH "")
-set(CMAKE_SIZE         "${CROSS_COMPILE}size"    CACHE FILEPATH "")
+# Every tool as a full path next to gcc: on Windows, Ninja runs ar and ranlib
+# through cmd.exe, whose PATH need not have the toolchain.
+find_program(RISCV_GCC "${CROSS_COMPILE}gcc" REQUIRED)
+get_filename_component(_rv_bin "${RISCV_GCC}" DIRECTORY)
+get_filename_component(_rv_prefix "${CROSS_COMPILE}" NAME)
+set(_rv "${_rv_bin}/${_rv_prefix}")
+if(CMAKE_HOST_WIN32)
+    set(_rv_exe ".exe")
+endif()
+
+set(CMAKE_C_COMPILER   "${_rv}gcc${_rv_exe}")
+set(CMAKE_ASM_COMPILER "${_rv}gcc${_rv_exe}")
+set(CMAKE_AR           "${_rv}ar${_rv_exe}"      CACHE FILEPATH "")
+set(CMAKE_RANLIB       "${_rv}ranlib${_rv_exe}"  CACHE FILEPATH "")
+set(CMAKE_OBJCOPY      "${_rv}objcopy${_rv_exe}" CACHE FILEPATH "")
+set(CMAKE_SIZE         "${_rv}size${_rv_exe}"    CACHE FILEPATH "")
 
 # Compiler checks cannot link a bare-metal executable without a linker script.
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)

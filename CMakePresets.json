@@ -1,0 +1,33 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "description": "Common settings: the project's RISC-V toolchain file, Ninja, one build folder per preset. FREERTOS_KERNEL_DIR comes from the environment, or from CMakeUserPresets.json (see CMakeUserPresets.json.example).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-cmake/${presetName}",
+      "toolchainFile": "${sourceDir}/cmake/riscv64-unknown-elf.cmake",
+      "cacheVariables": { "FREERTOS_KERNEL_DIR": "$penv{FREERTOS_KERNEL_DIR}" }
+    },
+    {
+      "name": "debug",
+      "inherits": "base",
+      "displayName": "Debug",
+      "description": "Debug build (-O0 -g3).",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Release",
+      "description": "Release build (-Os -g).",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "debug", "displayName": "Debug" },
+    { "name": "release", "configurePreset": "release", "displayName": "Release" }
+  ]
+}

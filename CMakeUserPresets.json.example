@@ -1,0 +1,15 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "local",
+      "inherits": "debug",
+      "displayName": "Debug (this machine)",
+      "description": "Copy this file to CMakeUserPresets.json (git-ignored) and set the paths of this machine.",
+      "cacheVariables": { "FREERTOS_KERNEL_DIR": "C:/FreeRTOS-Kernel" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "local", "configurePreset": "local", "displayName": "Debug (this machine)" }
+  ]
+}
