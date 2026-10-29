@@ -15,12 +15,30 @@
 >                      the application's table, jump to the high-half alias, stvec,
 >                      s_mode_main), linker.ld (L2LIM: linked at the alias, loaded
 >                      at the physical address)
-> app/                 main.c (the Sv39 root table, s_mode_main, the counting task
->                      with its DDR check),
->                      FreeRTOSConfig.h
+> config/              FreeRTOSConfig.h, built into libfreertos_smode
+> app/                 the application, its own project: main.c (the Sv39 root
+>                      table, s_mode_main, the counting task with its DDR check),
+>                      app/CMakeLists.txt, app/Makefile
 > renode/hello.resc    run it in Renode as a bootloader would start it
-> Makefile, CMakeLists.txt, cmake/riscv64-unknown-elf.cmake
+> Makefile, CMakeLists.txt  the libraries, staged/installed as a package, then app/
+> cmake/, mk/          toolchain file, flags, find_package(MpfsSmode) config, mpfs_smode.mk
 > ```
+>
+> **Libraries and application, as on `main`:** the top level builds two
+> static libraries and installs them as a package; `app/` links that package.
+>
+> | Library | Contents |
+> |---|---|
+> | `libmpfs_smode_boot.a` | `boot/`: M-mode `_start`, delegation and PMP, the SBI shim, the M→S handoff. No FreeRTOS: it needs `s_mode_main` and `mpfs_sv39_root_table` from the application and `freertos_risc_v_trap_handler` from the port |
+> | `libfreertos_smode.a` | the FreeRTOS kernel and the S-mode port, built against `FREERTOS_CONFIG_DIR/FreeRTOSConfig.h` (default `config/`) |
+>
+> The package is `lib/` (both libraries, `ldscripts/linker.ld`), `include/`
+> (`mpfs.h`; `freertos/`: kernel and port headers and the FreeRTOSConfig.h
+> the library was built with), `lib/cmake/MpfsSmode/` and `mpfs_smode.mk`. An
+> application links both libraries **whole-archive** (`MpfsSmode::mpfs_smode`,
+> `$(MPFS_SMODE_LIBS)`): nothing in it refers to the boot code, so a plain
+> archive link would drop `_start`. `MARCH` and `LIBC_SPECS` are
+> LIBRARY-FIXED: an application built with other values is an error.
 >
 > **FreeRTOS comes from outside the project:** `FREERTOS_KERNEL_DIR` (required)
 > points at a FreeRTOS-Kernel tree; `list.c`, `queue.c`, `tasks.c`,
@@ -28,10 +46,21 @@
 > and V10.4.3 (202012 LTS).
 >
 > ```sh
-> make FREERTOS_KERNEL_DIR=C:/FreeRTOS-Kernel                      # -> build/hello.elf
-> cmake -S . -B build-cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/riscv64-unknown-elf.cmake \
->       -DFREERTOS_KERNEL_DIR=C:/FreeRTOS-Kernel && cmake --build build-cmake
+> # libraries + app in one go
+> make FREERTOS_KERNEL_DIR=C:/FreeRTOS-Kernel      # -> build/dist (package), build/hello.elf
+> cmake --preset local && cmake --build --preset local   # -> build-cmake/local/app/hello.elf
+>                                                  #    (CMakeUserPresets.json.example)
+> # the package on its own
+> make install PREFIX=C:/mpfs-smode FREERTOS_KERNEL_DIR=C:/FreeRTOS-Kernel
+> cmake --install build-cmake/local --prefix C:/mpfs-smode
+> # the application on its own, against an installed package
+> make -f app/Makefile MPFS_SMODE_DIR=C:/mpfs-smode
+> cmake -S app -B build-app -G Ninja -DCMAKE_PREFIX_PATH=C:/mpfs-smode \
+>       -DCMAKE_TOOLCHAIN_FILE=C:/mpfs-smode/lib/cmake/MpfsSmode/riscv64-unknown-elf.cmake
 > ```
+>
+> Both build systems give the same image; renode/hello.resc loads
+> `build/hello.elf` unless `$elf` is set first.
 >
 > **Boot contract (no HAL, loaded by a bootloader):**
 > - The bootloader (e.g. an HSS bare-metal payload, not through OpenSBI) loads

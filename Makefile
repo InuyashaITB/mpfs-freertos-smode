@@ -1,80 +1,152 @@
 # SPDX-License-Identifier: MIT
 #
-# Bare-bones S-mode FreeRTOS hello-world for PolarFire SoC U54_1: one ELF from
-# the S-mode port (port/), the boot code (boot/), the application (app/) and
-# the FreeRTOS kernel in FREERTOS_KERNEL_DIR. CMakeLists.txt builds the same.
+# Bare-bones S-mode FreeRTOS for PolarFire SoC U54_1: two static libraries,
+# staged as an installable package in DIST_DIR, then the application
+# (app/Makefile) linked against that package. CMakeLists.txt builds the same.
 #
-#   make FREERTOS_KERNEL_DIR=<FreeRTOS-Kernel tree>     -> build/hello.elf, .hex, .map
+#   libmpfs_smode_boot.a  boot/: M-mode _start, delegation and PMP, the SBI
+#                         shim, the M->S handoff. No FreeRTOS.
+#   libfreertos_smode.a   the FreeRTOS kernel and the S-mode port (port/),
+#                         built against FREERTOS_CONFIG_DIR/FreeRTOSConfig.h
+#
+#   make FREERTOS_KERNEL_DIR=<FreeRTOS-Kernel tree>    -> build/dist, build/hello.elf, .hex, .map
+#   make lib FREERTOS_KERNEL_DIR=<...>                 -> build/dist only
+#   make install PREFIX=<dir> FREERTOS_KERNEL_DIR=<...>
 #   make clean
 #
 # Variables:
 #   FREERTOS_KERNEL_DIR  FreeRTOS-Kernel tree (required): its core .c files,
 #                        include/ and portable/MemMang/heap_4.c are built
-#   CROSS_COMPILE        default riscv64-unknown-elf-
-#   BUILD_TYPE           Debug (-O0 -g3, default) or Release (-Os -g)
-#   MARCH                default rv64gc, rv64gc_zicsr_zifencei on GCC >= 12
-#   LIBC_SPECS           default --specs=nano.specs (picolibc: --specs=picolibc.specs)
-#   LIBC_LINK_SPECS      default --specs=nosys.specs (picolibc: empty)
+#   FREERTOS_CONFIG_DIR  default config: the FreeRTOSConfig.h built into
+#                        libfreertos_smode (and installed with it)
+#   CROSS_COMPILE, BUILD_TYPE, MARCH, LIBC_SPECS, LIBC_LINK_SPECS: mk/toolchain.mk
 #   OUT_DIR              default build
+#   DIST_DIR             default $(OUT_DIR)/dist
 
-ifeq ($(strip $(FREERTOS_KERNEL_DIR)),)
-  $(error FREERTOS_KERNEL_DIR is not set: make FREERTOS_KERNEL_DIR=<path to a FreeRTOS-Kernel tree>)
+OUT_DIR             ?= build
+DIST_DIR            ?= $(OUT_DIR)/dist
+FREERTOS_CONFIG_DIR ?= config
+
+ifneq ($(filter-out clean,$(or $(MAKECMDGOALS),all)),)
+  ifeq ($(strip $(FREERTOS_KERNEL_DIR)),)
+    $(error FREERTOS_KERNEL_DIR is not set: make FREERTOS_KERNEL_DIR=<path to a FreeRTOS-Kernel tree>)
+  endif
+  KERNEL := $(patsubst %/,%,$(FREERTOS_KERNEL_DIR))
+  ifneq ($(words $(wildcard $(KERNEL)/tasks.c $(KERNEL)/include/FreeRTOS.h)),2)
+    $(error FREERTOS_KERNEL_DIR ($(KERNEL)) is not a FreeRTOS-Kernel tree (no tasks.c / include/FreeRTOS.h))
+  endif
 endif
-KERNEL := $(patsubst %/,%,$(FREERTOS_KERNEL_DIR))
-ifneq ($(words $(wildcard $(KERNEL)/tasks.c $(KERNEL)/include/FreeRTOS.h)),2)
-  $(error FREERTOS_KERNEL_DIR ($(KERNEL)) is not a FreeRTOS-Kernel tree (no tasks.c / include/FreeRTOS.h))
+CONFIG := $(patsubst %/,%,$(FREERTOS_CONFIG_DIR))
+ifeq ($(wildcard $(CONFIG)/FreeRTOSConfig.h),)
+  $(error FREERTOS_CONFIG_DIR ($(CONFIG)) has no FreeRTOSConfig.h)
 endif
 
-CROSS_COMPILE   ?= riscv64-unknown-elf-
-BUILD_TYPE      ?= Debug
-LIBC_SPECS      ?= --specs=nano.specs
-LIBC_LINK_SPECS ?= --specs=nosys.specs
-OUT_DIR         ?= build
+include mk/toolchain.mk
 
-CC      := $(CROSS_COMPILE)gcc
-OBJCOPY := $(CROSS_COMPILE)objcopy
-SIZE    := $(CROSS_COMPILE)size
+PORT    := port/RISC-V-SMode
+LIB_OBJ := $(OUT_DIR)/obj/lib
 
-GCC_MAJOR := $(firstword $(subst ., ,$(shell $(CC) -dumpversion)))
-MARCH ?= $(if $(filter 1 2 3 4 5 6 7 8 9 10 11,$(GCC_MAJOR)),rv64gc,rv64gc_zicsr_zifencei)
+BOOT_SRCS   := boot/entry.S boot/m_trap.S boot/m_shim.c boot/s_start.S
+PORT_SRCS   := $(PORT)/port.c $(PORT)/portASM.S
+KERNEL_SRCS := list.c queue.c tasks.c portable/MemMang/heap_4.c
 
-OPT := $(if $(filter Release,$(BUILD_TYPE)),-Os -g,-O0 -g3)
+BOOT_OBJS     := $(patsubst %,$(LIB_OBJ)/%.o,$(BOOT_SRCS))
+FREERTOS_OBJS := $(patsubst %,$(LIB_OBJ)/%.o,$(PORT_SRCS)) \
+                 $(patsubst %,$(LIB_OBJ)/kernel/%.o,$(KERNEL_SRCS))
 
-CFLAGS := -march=$(MARCH) -mabi=lp64d -mcmodel=medany -mstrict-align -fno-jump-tables \
-          -ffunction-sections -fdata-sections -fmessage-length=0 $(LIBC_SPECS) $(OPT) \
-          -Iapp -Iboot -Iport/RISC-V-SMode -I$(KERNEL)/include
-LDFLAGS := -march=$(MARCH) -mabi=lp64d -mcmodel=medany $(LIBC_SPECS) $(LIBC_LINK_SPECS) \
-           -nostartfiles -Wl,--gc-sections -T boot/linker.ld
+BOOT_CFLAGS     := $(MPFS_CFLAGS) -Iboot
+FREERTOS_CFLAGS := $(MPFS_CFLAGS) -I$(CONFIG) -I$(KERNEL)/include -I$(PORT)
 
-SRCS := boot/entry.S boot/m_trap.S boot/m_shim.c boot/s_start.S \
-        port/RISC-V-SMode/port.c port/RISC-V-SMode/portASM.S \
-        app/main.c
-KERNEL_SRCS := $(addprefix $(KERNEL)/,list.c queue.c tasks.c portable/MemMang/heap_4.c)
+BOOT_LIB     := $(DIST_DIR)/lib/libmpfs_smode_boot.a
+FREERTOS_LIB := $(DIST_DIR)/lib/libfreertos_smode.a
 
-OBJ_DIR := $(OUT_DIR)/obj
-OBJS := $(patsubst %,$(OBJ_DIR)/%.o,$(SRCS)) \
-        $(patsubst $(KERNEL)/%,$(OBJ_DIR)/kernel/%.o,$(KERNEL_SRCS))
-ELF := $(OUT_DIR)/hello.elf
+# The package: the same layout as cmake --install.
+STAGED := $(DIST_DIR)/include/mpfs.h \
+          $(patsubst $(KERNEL)/include/%,$(DIST_DIR)/include/freertos/%,$(wildcard $(KERNEL)/include/*.h)) \
+          $(addprefix $(DIST_DIR)/include/freertos/,portmacro.h portContext.h \
+              freertos_risc_v_chip_specific_extensions.h FreeRTOSConfig.h) \
+          $(DIST_DIR)/lib/ldscripts/linker.ld \
+          $(DIST_DIR)/mpfs_smode.mk $(DIST_DIR)/mk/toolchain.mk \
+          $(addprefix $(DIST_DIR)/lib/cmake/MpfsSmode/,MpfsSmodeConfig.cmake MpfsSmodeFlags.cmake \
+              riscv64-unknown-elf.cmake)
+BUILD_CONFIG       := $(DIST_DIR)/mk/build_config.mk
+BUILD_CONFIG_CMAKE := $(DIST_DIR)/lib/cmake/MpfsSmode/build_config.cmake
+SETTINGS           := CROSS_COMPILE BUILD_TYPE MARCH LIBC_SPECS LIBC_LINK_SPECS
 
-.PHONY: all clean
-all: $(OUT_DIR)/hello.hex
+.PHONY: all lib app install clean FORCE
+all: app
 
-$(OBJ_DIR)/kernel/%.c.o: $(KERNEL)/%.c
+lib: $(BOOT_LIB) $(FREERTOS_LIB) $(STAGED) $(BUILD_CONFIG) $(BUILD_CONFIG_CMAKE)
+
+app: lib
+	"$(MAKE)" -f app/Makefile MPFS_SMODE_DIR=$(DIST_DIR) OUT_DIR=$(OUT_DIR)
+
+install: lib
+ifeq ($(strip $(PREFIX)),)
+	$(error Set PREFIX to the install directory, e.g. make install PREFIX=C:/mpfs-smode)
+endif
+	mkdir -p $(PREFIX)
+	cp -R $(DIST_DIR)/. $(PREFIX)/
+
+$(LIB_OBJ)/boot/%.o: boot/%
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+	$(CC) $(BOOT_CFLAGS) -Wall -Wextra -MMD -MP -c $< -o $@
 
-$(OBJ_DIR)/%.o: %
+$(LIB_OBJ)/$(PORT)/%.o: $(PORT)/%
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) -Wall -Wextra -MMD -MP -c $< -o $@
+	$(CC) $(FREERTOS_CFLAGS) -Wall -Wextra -MMD -MP -c $< -o $@
 
-$(ELF): $(OBJS) boot/linker.ld
-	$(CC) $(LDFLAGS) -Wl,-Map=$(OUT_DIR)/hello.map $(OBJS) -o $@
-	$(SIZE) $@
+$(LIB_OBJ)/kernel/%.o: $(KERNEL)/%
+	@mkdir -p $(@D)
+	$(CC) $(FREERTOS_CFLAGS) -MMD -MP -c $< -o $@
 
-$(OUT_DIR)/hello.hex: $(ELF)
-	$(OBJCOPY) -O ihex $< $@
+$(BOOT_LIB): $(BOOT_OBJS)
+$(FREERTOS_LIB): $(FREERTOS_OBJS)
+$(BOOT_LIB) $(FREERTOS_LIB):
+	@mkdir -p $(@D)
+	rm -f $@
+	$(AR) qcs $@ $^
+
+# Staging: the port's headers first, so the kernel's rule only gets its own.
+$(DIST_DIR)/include/%.h: boot/%.h
+	@mkdir -p $(@D)
+	cp $< $@
+$(DIST_DIR)/include/freertos/FreeRTOSConfig.h: $(CONFIG)/FreeRTOSConfig.h
+	@mkdir -p $(@D)
+	cp $< $@
+$(DIST_DIR)/include/freertos/%.h: $(PORT)/%.h
+	@mkdir -p $(@D)
+	cp $< $@
+$(DIST_DIR)/include/freertos/%.h: $(KERNEL)/include/%.h
+	@mkdir -p $(@D)
+	cp $< $@
+$(DIST_DIR)/lib/ldscripts/linker.ld: boot/linker.ld
+	@mkdir -p $(@D)
+	cp $< $@
+$(DIST_DIR)/mpfs_smode.mk: mk/mpfs_smode.mk
+	@mkdir -p $(@D)
+	cp $< $@
+$(DIST_DIR)/mk/toolchain.mk: mk/toolchain.mk
+	@mkdir -p $(@D)
+	cp $< $@
+$(DIST_DIR)/lib/cmake/MpfsSmode/%.cmake: cmake/%.cmake
+	@mkdir -p $(@D)
+	cp $< $@
+
+# The settings the libraries were built with: rewritten only when they change,
+# so the application rebuilds exactly when it must.
+$(BUILD_CONFIG): FORCE
+	@mkdir -p $(@D)
+	@echo '# Generated by the mpfs-freertos-smode build: the settings the libraries were built with.' > $@.tmp
+	@$(foreach v,$(SETTINGS),echo 'MPFS_SMODE_BUILT_$(v) := $($(v))' >> $@.tmp;)
+	@cmp -s $@.tmp $@ && rm -f $@.tmp || mv -f $@.tmp $@
+$(BUILD_CONFIG_CMAKE): FORCE
+	@mkdir -p $(@D)
+	@echo '# Generated by the mpfs-freertos-smode build: the settings the libraries were built with.' > $@.tmp
+	@$(foreach v,$(SETTINGS),echo 'set(MPFS_SMODE_BUILT_$(v) "$($(v))")' >> $@.tmp;)
+	@cmp -s $@.tmp $@ && rm -f $@.tmp || mv -f $@.tmp $@
 
 clean:
 	rm -rf $(OUT_DIR)
 
--include $(OBJS:.o=.d)
+-include $(BOOT_OBJS:.o=.d) $(FREERTOS_OBJS:.o=.d)
