@@ -1,0 +1,61 @@
+{
+    // Debugging in Renode from VS Code, as on main. Tool paths come from the
+    // settings mpfs.renode and mpfs.gdb (.vscode/settings.json.example). The
+    // program is the CMake Tools launch target (hello).
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "CMake: build hello",
+            "type": "cmake",
+            "command": "build",
+            "targets": ["hello"],
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            // Renode with renode/debug.resc: paused, GDB server on port 3333.
+            // The terminal is Renode's monitor. Ready when the GDB server has
+            // started; stopped by "Renode: stop" after the debug session.
+            "label": "Renode: start for debugging",
+            "type": "process",
+            "command": "${config:mpfs.renode}",
+            "args": [
+                "--console",
+                "--plain",
+                "-e",
+                "$elf=@${command:cmake.getLaunchTargetPath}; include @renode/debug.resc"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "CMake: build hello",
+            "isBackground": true,
+            "presentation": { "reveal": "always", "panel": "dedicated" },
+            "problemMatcher": {
+                "owner": "renode",
+                // No problems to report: only the background markers matter.
+                // A script error also ends the wait; gdb then fails to
+                // connect and the error is in this terminal.
+                "pattern": { "regexp": "^\\b$" },
+                "background": {
+                    "activeBegins": true,
+                    "beginsPattern": "Including script: .*debug\\.resc",
+                    "endsPattern": "GDB server with all CPUs started|There was an error executing command"
+                }
+            }
+        },
+        {
+            "label": "Renode: stop",
+            "type": "shell",
+            "command": "echo ${input:terminateRenode}",
+            "presentation": { "reveal": "never" },
+            "problemMatcher": []
+        }
+    ],
+    "inputs": [
+        {
+            "id": "terminateRenode",
+            "type": "command",
+            "command": "workbench.action.tasks.terminate",
+            "args": "Renode: start for debugging"
+        }
+    ]
+}

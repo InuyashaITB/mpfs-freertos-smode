@@ -3,3 +3,6 @@ build*/
 
 # Machine-local CMake presets
 CMakeUserPresets.json
+
+# VS Code settings of this machine (see .vscode/settings.json.example)
+/.vscode/settings.json

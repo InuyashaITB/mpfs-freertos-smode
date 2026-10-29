@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+#
+# hello.resc waiting for a debugger: the image loaded and U54_1 set up the
+# way the bootloader starts it, the GDB server on $gdb_port, the emulation
+# paused until gdb sends 'monitor start'. Used by the VS Code tasks
+# (.vscode/tasks.json); also usable by hand, from the project root:
+#
+#   renode -e "include @renode/debug.resc"
+#   renode -e "$elf=@build-cmake/local/app/hello.elf; include @renode/debug.resc"
+#
+# then connect gdb to localhost:3333, 'monitor start', continue (the gdb
+# commands are in .vscode/launch.json).
+#
+# Variables:
+#   $elf        program, default the make build's (hello.resc)
+#   $gdb_port   default 3333 (the SoftConsole launcher's port)
+#
+# All harts are gdb threads (e51 is thread 1, u54_1 thread 2); only U54_1
+# runs, the others stay halted as in hello.resc.
+
+$gdb_port?=3333
+
+include @renode/hello.resc
+
+machine StartGdbServer $gdb_port
+echo "debug.resc: GDB server ready on port"
+echo $gdb_port

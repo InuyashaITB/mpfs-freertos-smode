@@ -1,0 +1,110 @@
+{
+    // gdb against Renode's own GDB server (no OpenOCD), as on main. Needs the
+    // C/C++ extension (cppdbg) and CMake Tools, and the settings mpfs.gdb /
+    // mpfs.renode (.vscode/settings.json.example).
+    //
+    // The program is the CMake Tools launch target (app/hello.elf).
+    // cmake.getLaunchTargetPath does not build: the Renode task builds first.
+    //
+    // Symbols: the ELF is linked at the virtual high half (0xFFFFFFC0_08...),
+    // where S-mode runs with Sv39 on, so breakpoints in app/, port/ and the
+    // kernel work as they are. The M-mode code in boot/ runs at the physical
+    // addresses (0x0800_0000...): hello-phys.gdb, written next to the ELF by
+    // app/CMakeLists.txt, loads the same symbols again 0xFFFFFFC0_00000000
+    // lower, so breakpoints and stepping work there too (gdb then shows two
+    // locations for a function; set them by *address when that matters).
+    // add-symbol-file is not given the path directly: gdb takes the
+    // backslashes of a Windows path as escapes, while 'source' keeps them.
+    //
+    // cppdbg treats the stop gdb reports on connecting as the launch's own:
+    // it resumes from it (unless stopAtConnect), and a stop it did not ask
+    // for is passed on only with the settings noted below.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // Builds, starts Renode (paused, U54_1 at _start_pa), connects,
+            // runs to s_mode_main. Stopping the session also stops Renode.
+            "name": "Debug in Renode",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.getLaunchTargetPath}",
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "miDebuggerPath": "${config:mpfs.gdb}",
+            "miDebuggerServerAddress": "localhost:3333",
+            "setupCommands": [
+                { "text": "set confirm off" },
+                { "text": "set $target_riscv=1" },
+                { "text": "set mem inaccessible-by-default off" },
+                { "text": "set riscv use-compressed-breakpoints on" }
+            ],
+            "postRemoteConnectCommands": [
+                { "text": "source ${command:cmake.getLaunchTargetDirectory}/hello-phys.gdb" },
+                { "text": "monitor start" },
+                { "text": "tbreak s_mode_main" }
+            ],
+            "launchCompleteCommand": "exec-continue",
+            // The tbreak is gdb's, not VS Code's: its hit is reported either
+            // as the entry point (only stops with stopAtEntry) or as an
+            // unknown breakpoint (stops as an exception unless "stop").
+            "stopAtEntry": true,
+            "unknownBreakpointHandling": "stop",
+            "preLaunchTask": "Renode: start for debugging",
+            "postDebugTask": "Renode: stop"
+        },
+        {
+            // Like "Debug in Renode", but stops at the first instruction
+            // (_start_pa, M-mode) instead of running to s_mode_main: for
+            // stepping through boot/ and the M->S handoff.
+            "name": "Debug in Renode from _start",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.getLaunchTargetPath}",
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "miDebuggerPath": "${config:mpfs.gdb}",
+            "miDebuggerServerAddress": "localhost:3333",
+            "setupCommands": [
+                { "text": "set confirm off" },
+                { "text": "set $target_riscv=1" },
+                { "text": "set mem inaccessible-by-default off" },
+                { "text": "set riscv use-compressed-breakpoints on" }
+            ],
+            "postRemoteConnectCommands": [
+                { "text": "source ${command:cmake.getLaunchTargetDirectory}/hello-phys.gdb" },
+                { "text": "monitor start" },
+                { "text": "thread 2" }
+            ],
+            "launchCompleteCommand": "None",
+            "stopAtConnect": true,
+            "preLaunchTask": "Renode: start for debugging",
+            "postDebugTask": "Renode: stop"
+        },
+        {
+            // Connects to a Renode that is already listening on port 3333
+            // (started with renode/debug.resc, or by the task) and stops
+            // wherever the harts are. Renode keeps running afterwards.
+            "name": "Attach to running Renode",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.getLaunchTargetPath}",
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "miDebuggerPath": "${config:mpfs.gdb}",
+            "miDebuggerServerAddress": "localhost:3333",
+            "setupCommands": [
+                { "text": "set confirm off" },
+                { "text": "set $target_riscv=1" },
+                { "text": "set mem inaccessible-by-default off" },
+                { "text": "set riscv use-compressed-breakpoints on" }
+            ],
+            "postRemoteConnectCommands": [
+                { "text": "source ${command:cmake.getLaunchTargetDirectory}/hello-phys.gdb" },
+                { "text": "monitor start" }
+            ],
+            "launchCompleteCommand": "None",
+            // Without it cppdbg resumes the harts after connecting.
+            "stopAtConnect": true
+        }
+    ]
+}
